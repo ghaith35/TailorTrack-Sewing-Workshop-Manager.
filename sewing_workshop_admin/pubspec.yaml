@@ -1,0 +1,30 @@
+name: sewing_workshop_admin
+description: A multi-user management and accounting system for a sewing workshop.
+
+publish_to: 'none'
+
+environment:
+  sdk: '>=2.18.0 <3.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  provider: ^6.0.0
+  http: ^0.13.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - lib/l10n/app_ar.arb
+  fonts:
+    - family: ArabicFont
+      fonts:
+        - asset: fonts/ArabicFont.ttf
+
+# Add any additional configurations or dependencies as needed.
