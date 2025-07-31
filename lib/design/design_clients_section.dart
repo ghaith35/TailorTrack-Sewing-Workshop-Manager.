@@ -61,70 +61,117 @@ class _DesignClientsSectionState extends State<DesignClientsSection> {
   }
 
   Future<void> _showClientDialog({Map<String, dynamic>? existing}) async {
-    final isEdit = existing != null;
-    final nameCtrl  = TextEditingController(text: existing?['full_name'] ?? '');
-    final phoneCtrl = TextEditingController(text: existing?['phone'] ?? '');
-    final addrCtrl  = TextEditingController(text: existing?['address'] ?? '');
+  final isEdit = existing != null;
+  final _formKey = GlobalKey<FormState>();
+  final nameCtrl = TextEditingController(text: existing?['full_name'] ?? '');
+  final phoneCtrl = TextEditingController(text: existing?['phone'] ?? '');
+  final addrCtrl = TextEditingController(text: existing?['address'] ?? '');
 
-    await showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text(isEdit ? 'تعديل عميل' : 'إضافة عميل'),
-        content: SingleChildScrollView(
+  await showDialog(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: Text(isEdit ? 'تعديل عميل' : 'إضافة عميل'),
+      content: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: nameCtrl,  decoration: const InputDecoration(labelText: 'الاسم الكامل')),
+              // Full name
+              TextFormField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(labelText: 'الاسم الكامل'),
+                validator: (v) =>
+                  (v == null || v.trim().isEmpty)
+                    ? 'الاسم مطلوب'
+                    : null,
+              ),
               const SizedBox(height: 8),
-              TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'رقم الهاتف'), keyboardType: TextInputType.phone),
+
+              // Phone
+              TextFormField(
+                controller: phoneCtrl,
+                decoration: const InputDecoration(labelText: 'رقم الهاتف'),
+                keyboardType: TextInputType.phone,
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return 'رقم الهاتف مطلوب';
+                  if (!RegExp(r'^0[0-9]{9}$').hasMatch(v.trim())) {
+                    return 'يجب أن يبدأ بـ 0 ويحتوي على 10 أرقام';
+                  }
+                  return null;
+                },
+              ),
               const SizedBox(height: 8),
-              TextField(controller: addrCtrl,  decoration: const InputDecoration(labelText: 'العنوان')),
+
+              // Address
+              TextFormField(
+                controller: addrCtrl,
+                decoration: const InputDecoration(labelText: 'العنوان'),
+                validator: (v) =>
+                  (v == null || v.trim().isEmpty)
+                    ? 'العنوان مطلوب'
+                    : null,
+              ),
             ],
           ),
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.primary,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () async {
-              final payload = {
-                'full_name': nameCtrl.text.trim(),
-                'phone': phoneCtrl.text.trim(),
-                'address': addrCtrl.text.trim(),
-              };
-              try {
-                http.Response res;
-                if (isEdit) {
-                  res = await http.put(
-                    Uri.parse('$_apiUrl${existing!['id']}'),
-                    headers: {'Content-Type': 'application/json'},
-                    body: jsonEncode(payload),
-                  );
-                  if (res.statusCode != 200) throw Exception(res.statusCode);
-                } else {
-                  res = await http.post(
-                    Uri.parse(_apiUrl),
-                    headers: {'Content-Type': 'application/json'},
-                    body: jsonEncode(payload),
-                  );
-                  if (res.statusCode != 201) throw Exception(res.statusCode);
-                }
-                Navigator.pop(context);
-                _fetchClients();
-                _snack('تم الحفظ بنجاح');
-              } catch (e) {
-                _snack('خطأ في الحفظ: $e', error: true);
-              }
-            },
-            child: Text(isEdit ? 'تحديث' : 'حفظ'),
-          ),
-        ],
       ),
-    );
-  }
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('إلغاء'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            foregroundColor: Colors.white,
+          ),
+          onPressed: () async {
+            // validate form first
+            if (!_formKey.currentState!.validate()) return;
+
+            final payload = {
+              'full_name': nameCtrl.text.trim(),
+              'phone': phoneCtrl.text.trim(),
+              'address': addrCtrl.text.trim(),
+            };
+
+            try {
+              late final http.Response res;
+              if (isEdit) {
+                res = await http.put(
+                  Uri.parse('$_apiUrl${existing!['id']}'),
+                  headers: {'Content-Type': 'application/json'},
+                  body: jsonEncode(payload),
+                );
+                if (res.statusCode != 200) {
+                  throw Exception('(${res.statusCode})');
+                }
+              } else {
+                res = await http.post(
+                  Uri.parse(_apiUrl),
+                  headers: {'Content-Type': 'application/json'},
+                  body: jsonEncode(payload),
+                );
+                if (res.statusCode != 201) {
+                  throw Exception('(${res.statusCode})');
+                }
+              }
+
+              Navigator.pop(context);
+              await _fetchClients();
+              _snack('تم الحفظ بنجاح');
+            } catch (e) {
+              _snack('خطأ في الحفظ: $e', error: true);
+            }
+          },
+          child: Text(isEdit ? 'تحديث' : 'حفظ'),
+        ),
+      ],
+    ),
+  );
+}
+
 
   Future<void> _confirmDelete(int id) async {
     final ok = await showDialog<bool>(

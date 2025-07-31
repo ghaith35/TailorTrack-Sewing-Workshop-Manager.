@@ -64,6 +64,11 @@ class _SewingWarehouseSectionState extends State<SewingWarehouseSection> {
       setState(() => isReadyProductsLoading = false);
     }
   }
+void _showSnackBar(String msg, {Color color = Colors.black}) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(msg), backgroundColor: color),
+  );
+}
 
   // ================= Raw Materials ================
   Future<void> fetchTypes() async {
@@ -110,82 +115,82 @@ class _SewingWarehouseSectionState extends State<SewingWarehouseSection> {
     setState(() => isMaterialsLoading = false);
   }
 
-  Future<void> addOrEditType({Map<String, dynamic>? current}) async {
-    final isEdit = current != null;
-    final nameCtrl = TextEditingController(text: current?['name'] ?? '');
-    final specsList = current == null
-        ? <Map<String,dynamic>>[]
-        : (current['specs'] as List).map((e) => {'id': e['id'], 'name': e['name']}).toList();
+  // Future<void> addOrEditType({Map<String, dynamic>? current}) async {
+  //   final isEdit = current != null;
+  //   final nameCtrl = TextEditingController(text: current?['name'] ?? '');
+  //   final specsList = current == null
+  //       ? <Map<String,dynamic>>[]
+  //       : (current['specs'] as List).map((e) => {'id': e['id'], 'name': e['name']}).toList();
 
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (c, setDialog) => AlertDialog(
-          title: Text(isEdit ? 'تعديل نوع المادة' : 'إضافة نوع مادة'),
-          content: SizedBox(
-            width: 350,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'اسم النوع')),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    const Text('المواصفات', style: TextStyle(fontWeight: FontWeight.bold)),
-                    const Spacer(),
-                    IconButton(icon: const Icon(Icons.add), onPressed: () => setDialog(() => specsList.add({'name': ''}))),
-                  ],
-                ),
-                ...specsList.asMap().entries.map((entry) {
-                  final i = entry.key;
-                  final spec = entry.value;
-                  return Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: TextEditingController(text: spec['name']),
-                          onChanged: (v) => spec['name'] = v,
-                          decoration: const InputDecoration(labelText: 'اسم المواصفة'),
-                        ),
-                      ),
-                      IconButton(icon: const Icon(Icons.delete), onPressed: () => setDialog(() => specsList.removeAt(i))),
-                    ],
-                  );
-                }).toList(),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-            TextButton(
-              onPressed: () async {
-                final body = jsonEncode({
-                  'name': nameCtrl.text,
-                  'specs': specsList.where((s) => (s['name'] as String).trim().isNotEmpty).toList(),
-                });
-                if (isEdit) {
-                  await http.put(
-                    Uri.parse('http://localhost:8888/sewing/material-types/${current!['id']}'),
-                    headers: {'Content-Type': 'application/json'},
-                    body: body,
-                  );
-                } else {
-                  await http.post(
-                    Uri.parse('http://localhost:8888/sewing/material-types'),
-                    headers: {'Content-Type': 'application/json'},
-                    body: body,
-                  );
-                }
-                Navigator.pop(context);
-                await fetchTypes();
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  //   await showDialog(
+  //     context: context,
+  //     builder: (_) => StatefulBuilder(
+  //       builder: (c, setDialog) => AlertDialog(
+  //         title: Text(isEdit ? 'تعديل نوع المادة' : 'إضافة نوع مادة'),
+  //         content: SizedBox(
+  //           width: 350,
+  //           child: Column(
+  //             mainAxisSize: MainAxisSize.min,
+  //             children: [
+  //               TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'اسم النوع')),
+  //               const SizedBox(height: 12),
+  //               Row(
+  //                 children: [
+  //                   const Text('المواصفات', style: TextStyle(fontWeight: FontWeight.bold)),
+  //                   const Spacer(),
+  //                   IconButton(icon: const Icon(Icons.add), onPressed: () => setDialog(() => specsList.add({'name': ''}))),
+  //                 ],
+  //               ),
+  //               ...specsList.asMap().entries.map((entry) {
+  //                 final i = entry.key;
+  //                 final spec = entry.value;
+  //                 return Row(
+  //                   children: [
+  //                     Expanded(
+  //                       child: TextField(
+  //                         controller: TextEditingController(text: spec['name']),
+  //                         onChanged: (v) => spec['name'] = v,
+  //                         decoration: const InputDecoration(labelText: 'اسم المواصفة'),
+  //                       ),
+  //                     ),
+  //                     IconButton(icon: const Icon(Icons.delete), onPressed: () => setDialog(() => specsList.removeAt(i))),
+  //                   ],
+  //                 );
+  //               }).toList(),
+  //             ],
+  //           ),
+  //         ),
+  //         actions: [
+  //           TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+  //           TextButton(
+  //             onPressed: () async {
+  //               final body = jsonEncode({
+  //                 'name': nameCtrl.text,
+  //                 'specs': specsList.where((s) => (s['name'] as String).trim().isNotEmpty).toList(),
+  //               });
+  //               if (isEdit) {
+  //                 await http.put(
+  //                   Uri.parse('http://localhost:8888/sewing/material-types/${current!['id']}'),
+  //                   headers: {'Content-Type': 'application/json'},
+  //                   body: body,
+  //                 );
+  //               } else {
+  //                 await http.post(
+  //                   Uri.parse('http://localhost:8888/sewing/material-types'),
+  //                   headers: {'Content-Type': 'application/json'},
+  //                   body: body,
+  //                 );
+  //               }
+  //               Navigator.pop(context);
+  //               await fetchTypes();
+  //             },
+  //             child: const Text('حفظ'),
+  //           ),
+  //         ],
+  //       ),
+  //     ),
+  //   );
+  // }
 
   Future<void> deleteType(int id) async {
     await http.delete(Uri.parse('http://localhost:8888/sewing/material-types/$id'));
@@ -198,191 +203,561 @@ class _SewingWarehouseSectionState extends State<SewingWarehouseSection> {
     });
   }
 
-  Future<void> addOrEditMaterial({Map<String, dynamic>? material}) async {
-    final isEdit = material != null;
-    final codeCtrl = TextEditingController(text: material?['code'] ?? '');
-    final stockCtrl = TextEditingController(text: material?['stock_quantity']?.toString() ?? '');
-    final specValues = material == null
-        ? specs.map((s) => {'spec_id': s['id'], 'spec_name': s['name'], 'value': ''}).toList()
-        : List<Map<String, dynamic>>.from(material['specs'] as List);
+  Future<void> addOrEditType({Map<String, dynamic>? current}) async {
+  final isEdit = current != null;
+  final _formKey = GlobalKey<FormState>();
+  final nameCtl = TextEditingController(text: current?['name'] ?? '');
+  final specsList = current == null
+      ? <Map<String, String>>[{'name': ''}]
+      : List<Map<String, String>>.from(
+          (current['specs'] as List).map((e) => {'id': '${e['id']}', 'name': e['name']}));
 
-    await showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text(isEdit ? 'تعديل المادة' : 'إضافة مادة'),
-        content: SingleChildScrollView(
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (ctx, setD) => AlertDialog(
+        title: Text(isEdit ? 'تعديل نوع المادة' : 'إضافة نوع مادة'),
+        content: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Name field
+                TextFormField(
+                  controller: nameCtl,
+                  decoration: const InputDecoration(labelText: 'اسم النوع'),
+                  validator: (v) => v == null || v.trim().isEmpty
+                      ? 'اسم النوع مطلوب'
+                      : null,
+                ),
+                const SizedBox(height: 12),
+                // Specs header + add button
+                Row(
+                  children: [
+                    const Text('المواصفات',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.add),
+                      onPressed: () =>
+                          setD(() => specsList.add({'name': ''})),
+                    ),
+                  ],
+                ),
+                // One TextFormField per spec
+                ...specsList.asMap().entries.map((entry) {
+                  final i = entry.key;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: TextFormField(
+                      initialValue: specsList[i]['name'],
+                      decoration:
+                          const InputDecoration(labelText: 'اسم المواصفة'),
+                      onChanged: (v) => specsList[i]['name'] = v,
+                      validator: (v) => v == null || v.trim().isEmpty
+                          ? 'أدخل اسم مواصفة'
+                          : null,
+                    ),
+                  );
+                }).toList(),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (!_formKey.currentState!.validate()) return;
+              if (specsList.isEmpty) {
+                _showSnackBar('أضف مواصفة واحدة على الأقل',
+                    color: Colors.red);
+                return;
+              }
+              final payload = {
+                'name': nameCtl.text.trim(),
+                'specs': specsList
+                    .map((s) => {'name': s['name']!.trim()})
+                    .toList(),
+              };
+              try {
+                if (isEdit) {
+                  await http.put(
+                    Uri.parse(
+                        'http://localhost:8888/sewing/material-types/${current!['id']}'),
+                    headers: {
+                      'Content-Type': 'application/json'
+                    },
+                    body: jsonEncode(payload),
+                  );
+                } else {
+                  await http.post(
+                    Uri.parse(
+                        'http://localhost:8888/sewing/material-types'),
+                    headers: {
+                      'Content-Type': 'application/json'
+                    },
+                    body: jsonEncode(payload),
+                  );
+                }
+                Navigator.pop(ctx);
+                await fetchTypes();
+                _showSnackBar('تم الحفظ', color: Colors.green);
+              } catch (e) {
+                _showSnackBar('خطأ في الحفظ: $e', color: Colors.red);
+              }
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Future<void> _addOrEditReadyProduct([Map<String, dynamic>? product]) async {
+  final isEdit = product != null;
+  final _formKey = GlobalKey<FormState>();
+  final modelIdCtl = TextEditingController(
+      text: product?['model_id']?.toString() ?? '');
+  final qtyCtl = TextEditingController(
+      text: product?['quantity']?.toString() ?? '');
+  // Display‑only when editing
+  final sizesDisplay = product?['sizes'] ?? '';
+  final nbrSizesDisplay =
+      product?['nbr_of_sizes']?.toString() ?? '';
+
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (ctx, setD) => AlertDialog(
+        title:
+            Text(isEdit ? 'تعديل منتج' : 'إضافة منتج'),
+        content: Form(
+          key: _formKey,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: codeCtrl, decoration: const InputDecoration(labelText: 'الكود')),
-              // TextField(controller: stockCtrl, decoration: const InputDecoration(labelText: 'الكمية (اختياري)'), keyboardType: TextInputType.number),
-              ...specValues.map((s) => TextField(
-                    controller: TextEditingController(text: s['value']),
-                    decoration: InputDecoration(labelText: s['spec_name']),
-                    onChanged: (v) => s['value'] = v,
-                  )),
+              // Model ID
+              TextFormField(
+                controller: modelIdCtl,
+                decoration:
+                    const InputDecoration(labelText: 'معرّف الموديل'),
+                keyboardType: TextInputType.number,
+                validator: (v) {
+                  final n = int.tryParse(v ?? '');
+                  return (n == null || n <= 0)
+                      ? 'أدخل معرف موديل صالح'
+                      : null;
+                },
+              ),
+              if (isEdit) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Text('المقاسات: ',
+                        style:
+                            TextStyle(fontWeight: FontWeight.bold)),
+                    Text(sizesDisplay),
+                  ],
+                ),
+                Row(
+                  children: [
+                    const Text('عدد المقاسات: ',
+                        style:
+                            TextStyle(fontWeight: FontWeight.bold)),
+                    Text(nbrSizesDisplay),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 8),
+              // Quantity
+              TextFormField(
+                controller: qtyCtl,
+                decoration:
+                    const InputDecoration(labelText: 'الكمية'),
+                keyboardType: TextInputType.number,
+                validator: (v) {
+                  final n = double.tryParse(v ?? '') ?? 0;
+                  return n <= 0
+                      ? 'أدخل قيمة كمية صالحة'
+                      : null;
+                },
+              ),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
           TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
             onPressed: () async {
-              final body = jsonEncode({
-                'type_id': selectedTypeId,
-                'code': codeCtrl.text,
-                'stock_quantity': double.tryParse(stockCtrl.text) ?? 0,
-                'specs': specValues.map((s) => {'spec_id': s['spec_id'], 'value': s['value']}).toList(),
-              });
-              if (isEdit) {
-                await http.put(
-                  Uri.parse('http://localhost:8888/sewing/materials/${material!['id']}'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: body,
-                );
-              } else {
-                await http.post(
-                  Uri.parse('http://localhost:8888/sewing/materials'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: body,
-                );
+              if (!_formKey.currentState!.validate()) return;
+              final payload = {
+                'warehouse_id': 1,
+                'model_id':
+                    int.parse(modelIdCtl.text.trim()),
+                'quantity':
+                    double.parse(qtyCtl.text.trim()),
+              };
+              try {
+                final uri = isEdit
+                    ? 'http://localhost:8888/sewing/product-inventory/${product!['id']}'
+                    : 'http://localhost:8888/sewing/product-inventory';
+                final resp = isEdit
+                    ? await http.put(Uri.parse(uri),
+                        headers: {
+                          'Content-Type':
+                              'application/json'
+                        },
+                        body: jsonEncode(payload))
+                    : await http.post(Uri.parse(uri),
+                        headers: {
+                          'Content-Type':
+                              'application/json'
+                        },
+                        body: jsonEncode(payload));
+                if (resp.statusCode == 200) {
+                  Navigator.pop(ctx);
+                  await _fetchReadyProducts();
+                  _showSnackBar('تم الحفظ',
+                      color: Colors.green);
+                } else {
+                  throw '(${resp.statusCode})';
+                }
+              } catch (e) {
+                _showSnackBar('خطأ: $e',
+                    color: Colors.red);
               }
-              Navigator.pop(context);
-              await fetchMaterialsForType(selectedTypeId!);
             },
             child: const Text('حفظ'),
           ),
         ],
       ),
-    );
-  }
-Future<void> _addOrEditReadyProduct([Map<String, dynamic>? product]) async {
-    final isEdit = product != null;
-    final modelIdCtrl = TextEditingController(text: product?['model_id']?.toString() ?? '');
-    final qtyCtrl = TextEditingController(text: product?['quantity']?.toString() ?? '');
-    // Display only (not editable)
-    final sizesDisplay = product?['sizes'] ?? '';
-    final nbrSizesDisplay = product?['nbr_of_sizes']?.toString() ?? '';
+    ),
+  );
+}
 
-    await showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text(isEdit ? 'تعديل منتج' : 'إضافة منتج'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: modelIdCtrl,
-              decoration: const InputDecoration(labelText: 'معرف الموديل'),
-              keyboardType: TextInputType.number,
-            ),
-            if (isEdit)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8.0),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        const Text('المقاسات: ', style: TextStyle(fontWeight: FontWeight.bold)),
-                        Text(sizesDisplay),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        const Text('عدد المقاسات: ', style: TextStyle(fontWeight: FontWeight.bold)),
-                        Text(nbrSizesDisplay),
-                      ],
-                    ),
-                  ],
+Future<void> addOrEditMaterial({Map<String, dynamic>? material}) async {
+  final isEdit = material != null;
+  final _formKey = GlobalKey<FormState>();
+  final codeCtl =
+      TextEditingController(text: material?['code'] ?? '');
+  // Build a list of spec entries
+  final specValues = material == null
+      ? specs
+          .map((s0) => {
+                'spec_id': s0['id'],
+                'spec_name': s0['name'],
+                'value': ''
+              })
+          .toList()
+      : List<Map<String, dynamic>>.from(
+          material['specs'] as List);
+
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (ctx, setD) => AlertDialog(
+        title:
+            Text(isEdit ? 'تعديل المادة' : 'إضافة مادة'),
+        content: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Code field
+                TextFormField(
+                  controller: codeCtl,
+                  decoration:
+                      const InputDecoration(labelText: 'الكود'),
+                  validator: (v) => v == null || v.trim().isEmpty
+                      ? 'الكود مطلوب'
+                      : null,
                 ),
-              ),
-            TextField(
-              controller: qtyCtrl,
-              decoration: const InputDecoration(labelText: 'الكمية'),
-              keyboardType: TextInputType.number,
+                const SizedBox(height: 12),
+                // One TextFormField per spec
+                ...specValues.asMap().entries.map((e) {
+                  final i = e.key;
+                  final spec = specValues[i];
+                  return Padding(
+                    padding:
+                        const EdgeInsets.only(bottom: 12),
+                    child: TextFormField(
+                      initialValue: spec['value'] as String?,
+                      decoration: InputDecoration(
+                          labelText: spec['spec_name']),
+                      onChanged: (v) =>
+                          specValues[i]['value'] = v,
+                      validator: (v) => v == null ||
+                              v.trim().isEmpty
+                          ? 'الرجاء إدخال ${spec['spec_name']}'
+                          : null,
+                    ),
+                  );
+                }).toList(),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (!_formKey.currentState!.validate()) return;
+              final payload = {
+                'type_id': selectedTypeId,
+                'code': codeCtl.text.trim(),
+                'specs': specValues
+                    .map((s) => {
+                          'spec_id': s['spec_id'],
+                          'value': (s['value'] as String).trim(),
+                        })
+                    .toList(),
+              };
+              try {
+                final uri = material != null
+                    ? 'http://localhost:8888/sewing/materials/${material['id']}'
+                    : 'http://localhost:8888/sewing/materials';
+                final resp = material != null
+                    ? await http.put(Uri.parse(uri),
+                        headers: {
+                          'Content-Type':
+                              'application/json'
+                        },
+                        body: jsonEncode(payload))
+                    : await http.post(Uri.parse(uri),
+                        headers: {
+                          'Content-Type':
+                              'application/json'
+                        },
+                        body: jsonEncode(payload));
+                if (resp.statusCode == 200) {
+                  Navigator.pop(ctx);
+                  await fetchMaterialsForType(
+                      selectedTypeId!);
+                  _showSnackBar('تم الحفظ',
+                      color: Colors.green);
+                } else {
+                  throw 'code ${resp.statusCode}';
+                }
+              } catch (e) {
+                _showSnackBar('خطأ: $e',
+                    color: Colors.red);
+              }
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+  // Delete a ready product with confirmation
+Future<void> _deleteReadyProduct(int? id) async {
+  if (id == null) {
+    _showSnackBar('معرف المنتج غير صالح', color: Colors.red);
+    return;
+  }
+
+  final confirm = await showDialog<bool>(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: const Text('تأكيد الحذف'),
+      content: const Text('هل تريد حذف هذا المنتج؟'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('إلغاء'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.pop(context, true),
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          child: const Text('حذف'),
+        ),
+      ],
+    ),
+  ) ?? false;
+
+  if (!confirm) return;
+
+  try {
+    final resp = await http.delete(
+      Uri.parse('http://localhost:8888/sewing/product-inventory/$id'),
+    );
+    if (resp.statusCode == 200) {
+      _showSnackBar('تم حذف المنتج', color: Colors.green);
+      await _fetchReadyProducts();
+    } else {
+      throw 'فشل الحذف (code ${resp.statusCode})';
+    }
+  } catch (e) {
+    _showSnackBar(e.toString(), color: Colors.red);
+  }
+}
+
+// Delete a material‑type with confirmation
+Future<void> _deleteType(int id, String name) async {
+  final confirm = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('تأكيد الحذف'),
+          content: Text('هل تريد حذف نوع المادة "$name"؟'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('حذف'),
             ),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-          TextButton(
-            onPressed: () async {
-              final body = jsonEncode({
-                'warehouse_id': 1, // or from your dynamic state if needed
-                'model_id': int.tryParse(modelIdCtrl.text),
-                'quantity': double.tryParse(qtyCtrl.text) ?? 0,
-              });
-              final url = isEdit
-                  ? 'http://localhost:8888/sewing/product-inventory/${product!['id']}'
-                  : 'http://localhost:8888/sewing/product-inventory';
-              final req = isEdit
-                  ? http.put(Uri.parse(url), headers: {'Content-Type': 'application/json'}, body: body)
-                  : http.post(Uri.parse(url), headers: {'Content-Type': 'application/json'}, body: body);
-              await req;
-              Navigator.pop(context);
-              await _fetchReadyProducts();
-            },
-            child: const Text('حفظ'),
-          ),
-        ],
-      ),
-    );
-  }
+      ) ??
+      false;
+  if (!confirm) return;
 
-  Future<void> _deleteReadyProduct(int id) async {
-    await http.delete(Uri.parse('http://localhost:8888/sewing/product-inventory/$id'));
-    await _fetchReadyProducts();
+  try {
+    final resp = await http.delete(
+      Uri.parse('http://localhost:8888/sewing/material-types/$id'),
+    );
+    if (resp.statusCode == 200) {
+      _showSnackBar('تم حذف نوع المادة', color: Colors.green);
+      await fetchTypes();
+      setState(() {
+        selectedTypeId = null;
+        selectedTypeName = null;
+        specs = [];
+        materials = [];
+      });
+    } else {
+      throw 'فشل الحذف';
+    }
+  } catch (e) {
+    _showSnackBar(e.toString(), color: Colors.red);
   }
+}
+
+// Delete a raw‑material with confirmation
+Future<void> _deleteMaterial(int id, String code) async {
+  final confirm = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('تأكيد الحذف'),
+          content: Text('هل تريد حذف المادة "$code"؟'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('حذف'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+  if (!confirm) return;
+
+  try {
+    final resp = await http.delete(
+      Uri.parse('http://localhost:8888/sewing/materials/$id'),
+    );
+    if (resp.statusCode == 200) {
+      _showSnackBar('تم حذف المادة', color: Colors.green);
+      await fetchMaterialsForType(selectedTypeId!);
+    } else {
+      throw 'فشل الحذف';
+    }
+  } catch (e) {
+    _showSnackBar(e.toString(), color: Colors.red);
+  }
+}
+
 
   Widget _buildReadyProducts() {
-    if (isReadyProductsLoading) return const Center(child: CircularProgressIndicator());
-    if (readyProducts.isEmpty) return const Center(child: Text('لا توجد بيانات لعرضها'));
+  if (isReadyProductsLoading) {
+    return const Center(child: CircularProgressIndicator());
+  }
+  if (readyProducts.isEmpty) {
+    return const Center(child: Text('لا توجد بيانات لعرضها'));
+  }
 
-    return Scrollbar(
+  return Scrollbar(
+    controller: _readyProductsH,
+    thumbVisibility: true,
+    child: SingleChildScrollView(
       controller: _readyProductsH,
-      thumbVisibility: true,
-      child: SingleChildScrollView(
-        controller: _readyProductsH,
-        scrollDirection: Axis.horizontal,
-        child: SizedBox(
-          width: 1050, // Increased width for the new column
-          child: Scrollbar(
+      scrollDirection: Axis.horizontal,
+      child: SizedBox(
+        width: 1050, // Increased width for the new column
+        child: Scrollbar(
+          controller: _readyProductsV,
+          thumbVisibility: true,
+          child: SingleChildScrollView(
             controller: _readyProductsV,
-            thumbVisibility: true,
-            child: SingleChildScrollView(
-              controller: _readyProductsV,
-              child: DataTable(
-                headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
-                columns: const [
-                  DataColumn(label: Text('الموديل', style: TextStyle(color: Colors.white))),
-                  DataColumn(label: Text('المقاسات', style: TextStyle(color: Colors.white))),
-                  DataColumn(label: Text('عدد المقاسات', style: TextStyle(color: Colors.white))),
-                  DataColumn(label: Text('الكمية', style: TextStyle(color: Colors.white))),
-                  DataColumn(label: Text('السعر للوحدة', style: TextStyle(color: Colors.white))),
-                  DataColumn(label: Text('خيارات', style: TextStyle(color: Colors.white))),
-                ],
-                rows: readyProducts.map((p) {
-                  return DataRow(cells: [
-                    DataCell(Text(p['model_name'] ?? '')),
-                    DataCell(Text(p['sizes'] ?? '')),
-                    DataCell(Text('${p['nbr_of_sizes'] ?? 0}')),
-                    DataCell(Text('${p['quantity'] ?? ''}')),
-                    DataCell(Text('${(p['global_price'] ?? 0).toStringAsFixed(2)} دج')), // NEW
-                    DataCell(Row(
-                      children: [
-                        IconButton(icon: const Icon(Icons.edit, color: Colors.teal), onPressed: () => _addOrEditReadyProduct(p)),
-                        IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _deleteReadyProduct(p['id'] as int)),
-                      ],
-                    )),
-                  ]);
-                }).toList(),
+            child: DataTable(
+              headingRowColor: MaterialStateProperty.all(
+                Theme.of(context).colorScheme.primary,
               ),
+              columns: const [
+                DataColumn(label: Text('الموديل', style: TextStyle(color: Colors.white))),
+                DataColumn(label: Text('المقاسات', style: TextStyle(color: Colors.white))),
+                DataColumn(label: Text('عدد المقاسات', style: TextStyle(color: Colors.white))),
+                DataColumn(label: Text('الكمية', style: TextStyle(color: Colors.white))),
+                DataColumn(label: Text('السعر للوحدة', style: TextStyle(color: Colors.white))),
+                DataColumn(label: Text('خيارات', style: TextStyle(color: Colors.white))),
+              ],
+              rows: readyProducts.map((p) {
+                // Safely extract the ID, or leave null if missing
+                final int? id = p['id'] is int ? p['id'] as int : null;
+
+                return DataRow(cells: [
+                  DataCell(Text(p['model_name'] ?? '')),
+                  DataCell(Text(p['sizes'] ?? '')),
+                  DataCell(Text('${p['nbr_of_sizes'] ?? 0}')),
+                  DataCell(Text('${p['quantity'] ?? ''}')),
+                  DataCell(Text('${(p['global_price'] ?? 0).toStringAsFixed(2)} دج')),
+                  DataCell(Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit, color: Colors.teal),
+                        onPressed: () => _addOrEditReadyProduct(p),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        // Always clickable; delete handler will show a snackbar if ID is null
+                        onPressed: () => _deleteReadyProduct(id),
+                      ),
+                    ],
+                  )),
+                ]);
+              }).toList(),
             ),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
+
+
   Future<void> deleteMaterial(int id) async {
     await http.delete(Uri.parse('http://localhost:8888/sewing/materials/$id'));
     await fetchMaterialsForType(selectedTypeId!);
@@ -462,22 +837,9 @@ Future<void> _addOrEditReadyProduct([Map<String, dynamic>? product]) async {
                               children: [
                                 IconButton(icon: const Icon(Icons.edit, color: Colors.teal), onPressed: () => addOrEditType(current: t)),
                                 IconButton(
-                                  icon: const Icon(Icons.delete, color: Colors.red),
-                                  onPressed: () async {
-                                    final confirm = await showDialog<bool>(
-                                      context: context,
-                                      builder: (c) => AlertDialog(
-                                        title: const Text('تأكيد الحذف'),
-                                        content: const Text('هل أنت متأكد من حذف هذا النوع؟'),
-                                        actions: [
-                                          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')),
-                                          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('حذف')),
-                                        ],
-                                      ),
-                                    );
-                                    if (confirm == true) await deleteType(t['id'] as int);
-                                  },
-                                ),
+  icon: const Icon(Icons.delete, color: Colors.red),
+  onPressed: () => _deleteType(types[i]['id'] as int, types[i]['name'] as String),
+),
                               ],
                             ),
                           );
@@ -531,25 +893,36 @@ Future<void> _addOrEditReadyProduct([Map<String, dynamic>? product]) async {
                                           ...specs.map((s) => DataColumn(label: Text(s['name'], style: const TextStyle(color: Colors.white)))),
                                           const DataColumn(label: Text('خيارات', style: TextStyle(color: Colors.white))),
                                         ],
-                                        rows: materials.map((m) {
-                                          final specVals = m['specs'] as List;
-                                          return DataRow(cells: [
-                                            DataCell(Text(m['code'] ?? '')),
-                                            DataCell(Text(m['stock_quantity']?.toString() ?? '')),
-                                            DataCell(Text(
-                                              (m['last_unit_price'] != null && m['last_unit_price'] > 0)
-                                                  ? m['last_unit_price'].toString()
-                                                  : '—',
-                                            )),
-                                            ...specVals.map((s) => DataCell(Text(s['value'] ?? ''))),
-                                            DataCell(Row(
-                                              children: [
-                                                IconButton(icon: const Icon(Icons.edit, color: Colors.teal), onPressed: () => addOrEditMaterial(material: m)),
-                                                IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => deleteMaterial(m['id'] as int)),
-                                              ],
-                                            )),
-                                          ]);
-                                        }).toList(),
+rows: materials.map((material) {
+  final specVals = material['specs'] as List;
+  return DataRow(cells: [
+    DataCell(Text(material['code'] ?? '')),
+    DataCell(Text(material['stock_quantity']?.toString() ?? '')),
+    DataCell(Text(
+      (material['last_unit_price'] != null && material['last_unit_price'] > 0)
+          ? material['last_unit_price'].toString()
+          : '—',
+    )),
+    // one DataCell for each spec value
+    ...specVals.map((s) => DataCell(Text(s['value'] ?? ''))),
+    DataCell(Row(
+      children: [
+        IconButton(
+          icon: const Icon(Icons.edit, color: Colors.teal),
+          onPressed: () => addOrEditMaterial(material: material),
+        ),
+        IconButton(
+          icon: const Icon(Icons.delete, color: Colors.red),
+          onPressed: () => _deleteMaterial(
+            material['id'] as int,
+            material['code'] as String,
+          ),
+        ),
+      ],
+    )),
+  ]);
+}).toList(),
+
                                       ),
                                     ),
                                   ),

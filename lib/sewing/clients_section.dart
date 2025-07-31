@@ -36,8 +36,8 @@ class _SewingClientsSectionState extends State<SewingClientsSection> {
         final phone = (c['phone'] ?? '').toString().toLowerCase();
         final address = (c['address'] ?? '').toString().toLowerCase();
         return name.contains(query) ||
-               phone.contains(query) ||
-               address.contains(query);
+            phone.contains(query) ||
+            address.contains(query);
       }).toList();
     });
   }
@@ -49,7 +49,7 @@ class _SewingClientsSectionState extends State<SewingClientsSection> {
         final List<dynamic> list = jsonDecode(res.body);
         _clients = list.cast<Map<String, dynamic>>();
         _clients.sort((a, b) =>
-          a['full_name'].toString().compareTo(b['full_name'].toString()));
+            a['full_name'].toString().compareTo(b['full_name'].toString()));
         setState(() => _filtered = List.from(_clients));
       } else {
         throw Exception('Server error ${res.statusCode}');
@@ -69,31 +69,45 @@ class _SewingClientsSectionState extends State<SewingClientsSection> {
     final nameCtrl = TextEditingController(text: existing?['full_name'] ?? '');
     final phoneCtrl = TextEditingController(text: existing?['phone'] ?? '');
     final addrCtrl = TextEditingController(text: existing?['address'] ?? '');
+    final _formKey = GlobalKey<FormState>();
 
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
         title: Text(isEdit ? 'تعديل عميل' : 'إضافة عميل'),
         content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(labelText: 'الاسم الكامل'),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: phoneCtrl,
-                decoration: const InputDecoration(labelText: 'رقم الهاتف'),
-                keyboardType: TextInputType.phone,
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: addrCtrl,
-                decoration: const InputDecoration(labelText: 'العنوان'),
-              ),
-            ],
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(labelText: 'الاسم الكامل'),
+                  validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: phoneCtrl,
+                  decoration: const InputDecoration(labelText: 'رقم الهاتف'),
+                  keyboardType: TextInputType.phone,
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return 'مطلوب';
+                    final phone = v.trim();
+                    if (!RegExp(r'^0\d{9}$').hasMatch(phone)) {
+                      return 'رقم الهاتف يجب أن يبدأ بـ 0 ويحتوي على 10 أرقام';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: addrCtrl,
+                  decoration: const InputDecoration(labelText: 'العنوان'),
+                  validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                ),
+              ],
+            ),
           ),
         ),
         actions: [
@@ -107,11 +121,14 @@ class _SewingClientsSectionState extends State<SewingClientsSection> {
               foregroundColor: Colors.white,
             ),
             onPressed: () async {
+              if (!_formKey.currentState!.validate()) return;
+
               final payload = {
                 'full_name': nameCtrl.text.trim(),
                 'phone': phoneCtrl.text.trim(),
                 'address': addrCtrl.text.trim(),
               };
+
               try {
                 if (isEdit) {
                   final uri = Uri.parse(_apiUrl).resolve('${existing!['id']}');
@@ -120,15 +137,36 @@ class _SewingClientsSectionState extends State<SewingClientsSection> {
                     headers: {'Content-Type': 'application/json'},
                     body: jsonEncode(payload),
                   );
-                  if (res.statusCode != 200) throw Exception(res.statusCode);
+                  if (res.statusCode != 200) {
+                    final body = jsonDecode(res.body);
+                    throw Exception(body['error'] ?? 'فشل التحديث');
+                  }
                 } else {
                   final res = await http.post(
                     Uri.parse(_apiUrl),
                     headers: {'Content-Type': 'application/json'},
                     body: jsonEncode(payload),
                   );
-                  if (res.statusCode != 201) throw Exception(res.statusCode);
+                  if (res.statusCode == 201) {
+                    Navigator.pop(context);
+                    _fetchClients();
+                    return;
+                  } else {
+                    final body = jsonDecode(res.body);
+                    if (body['details'] != null &&
+                        body['details'].toString().contains('duplicate key')) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('رقم الهاتف موجود مسبقاً'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      return;
+                    }
+                    throw Exception(body['error'] ?? 'فشل الإضافة');
+                  }
                 }
+
                 Navigator.pop(context);
                 _fetchClients();
               } catch (e) {
@@ -171,7 +209,10 @@ class _SewingClientsSectionState extends State<SewingClientsSection> {
       try {
         final uri = Uri.parse(_apiUrl).resolve('$id');
         final res = await http.delete(uri);
-        if (res.statusCode != 200) throw Exception(res.statusCode);
+        if (res.statusCode != 200) {
+          final responseBody = jsonDecode(res.body);
+          throw Exception(responseBody['error'] ?? 'فشل الحذف');
+        }
         _fetchClients();
       } catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -188,17 +229,10 @@ class _SewingClientsSectionState extends State<SewingClientsSection> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Top bar: Search + Add button
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
-                        children: [
-                          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const SizedBox(width: 8),
               SizedBox(
                 width: 220,
                 child: TextField(
@@ -209,32 +243,6 @@ class _SewingClientsSectionState extends State<SewingClientsSection> {
                   ),
                 ),
               ),
-              IconButton(
-                tooltip: 'تحديث',
-                onPressed: _fetchClients,
-                icon: const Icon(Icons.refresh),
-              ),],),
-        // Padding(
-        //   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        //   child: Row(
-        //     children: [
-        //       SizedBox(
-        //         width: 200,
-        //         child: TextField(
-        //           controller: _searchController,
-        //           decoration: InputDecoration(
-        //             hintText: 'بحث...',
-        //             prefixIcon: const Icon(Icons.search),
-        //             filled: true,
-        //             fillColor: Colors.white,
-        //             border: OutlineInputBorder(
-        //               borderRadius: BorderRadius.circular(8),
-        //               borderSide: BorderSide.none,
-        //             ),
-        //             contentPadding: const EdgeInsets.symmetric(vertical: 0),
-        //           ),
-        //         ),
-        //       ),
               const Spacer(),
               ElevatedButton.icon(
                 onPressed: () => _showClientDialog(),
@@ -248,47 +256,51 @@ class _SewingClientsSectionState extends State<SewingClientsSection> {
             ],
           ),
         ),
-
-        // Table
         Expanded(
           child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              headingRowColor: MaterialStateProperty.all(
-                Theme.of(context).colorScheme.primary,
+            scrollDirection: Axis.vertical,
+            child: Scrollbar(
+              thumbVisibility: true,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  headingRowColor: MaterialStateProperty.all(
+                    Theme.of(context).colorScheme.primary,
+                  ),
+                  headingTextStyle: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold,
+                  ),
+                  columns: const [
+                    DataColumn(label: Text('الاسم الكامل')),
+                    DataColumn(label: Text('رقم الهاتف')),
+                    DataColumn(label: Text('العنوان')),
+                    DataColumn(label: Text('خيارات')),
+                  ],
+                  rows: _filtered.map((c) {
+                    return DataRow(cells: [
+                      DataCell(Text(c['full_name'] ?? '-')),
+                      DataCell(Text(c['phone'] ?? '-')),
+                      DataCell(Text(c['address'] ?? '-')),
+                      DataCell(Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: Icon(
+                              Icons.edit,
+                              color: Theme.of(context).colorScheme.secondary,
+                            ),
+                            onPressed: () => _showClientDialog(existing: c),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () => _confirmDelete(c['id']),
+                          ),
+                        ],
+                      )),
+                    ]);
+                  }).toList(),
+                ),
               ),
-              headingTextStyle: const TextStyle(
-                color: Colors.white, fontWeight: FontWeight.bold,
-              ),
-              columns: const [
-                DataColumn(label: Text('الاسم الكامل')),
-                DataColumn(label: Text('رقم الهاتف')),
-                DataColumn(label: Text('العنوان')),
-                DataColumn(label: Text('خيارات')),
-              ],
-              rows: _filtered.map((c) {
-                return DataRow(cells: [
-                  DataCell(Text(c['full_name'] ?? '-')),
-                  DataCell(Text(c['phone'] ?? '-')),
-                  DataCell(Text(c['address'] ?? '-')),
-                  DataCell(Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: Icon(
-                          Icons.edit,
-                          color: Theme.of(context).colorScheme.secondary,
-                        ),
-                        onPressed: () => _showClientDialog(existing: c),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () => _confirmDelete(c['id']),
-                      ),
-                    ],
-                  )),
-                ]);
-              }).toList(),
             ),
           ),
         ),

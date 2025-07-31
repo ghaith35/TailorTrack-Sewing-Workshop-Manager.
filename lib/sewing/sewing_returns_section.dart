@@ -166,390 +166,426 @@ class _SewingReturnsSectionState extends State<SewingReturnsSection> {
 
   // ---------------- Add / Delete ----------------
   Future<void> _showAddReturnDialog() async {
-    int? selectedFactureId;
-    int? selectedModelId;
-    int quantity = 1;
-    bool isReadyToSell = false;
-    String notes = '';
-    List<Map<String, dynamic>> repairMaterials = [];
+  int? selectedFactureId;
+  int? selectedModelId;
+  int quantity = 1;
+  bool isReadyToSell = false;
+  String notes = '';
+  List<Map<String, dynamic>> repairMaterials = [];
 
-    final quantityController = TextEditingController(text: '1');
-    final notesController = TextEditingController();
+  final notesController = TextEditingController();
 
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final perPieceCost = repairMaterials.fold<double>(
-              0.0, (s, m) => s + _toDouble(m['cost']));
-          final totalRepairCost = perPieceCost * quantity;
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (context, setDialogState) {
+        final perPieceCost = repairMaterials.fold<double>(
+            0.0, (s, m) => s + _toDouble(m['cost']));
+        final totalRepairCost = perPieceCost * quantity;
 
-          return AlertDialog(
-            title: const Text('إضافة مرتجع بضاعة'),
-            content: SizedBox(
-              width: 500,
-              height: 600,
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // معلومات المرتجع
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('معلومات المرتجع',
-                                style: TextStyle(
-                                    fontWeight: FontWeight.bold, fontSize: 16)),
+        return AlertDialog(
+          title: const Text('إضافة مرتجع بضاعة'),
+          content: SizedBox(
+            width: 500,
+            height: 600,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // معلومات المرتجع
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('معلومات المرتجع',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 16)),
+                          const SizedBox(height: 12),
+                          DropdownButtonFormField<int>(
+                            decoration:
+                                const InputDecoration(labelText: 'اختر الفاتورة'),
+                            value: selectedFactureId,
+                            items: allFactures.map((facture) {
+                              return DropdownMenuItem<int>(
+                                value: facture['id'] as int,
+                                child: Text(
+                                    'فاتورة رقم ${facture['id']} - ${facture['client_name']}'),
+                              );
+                            }).toList(),
+                            onChanged: (value) {
+                              setDialogState(() {
+                                selectedFactureId = value;
+                                selectedModelId = null;
+                                quantity = 1;
+                              });
+                            },
+                          ),
+                          if (selectedFactureId != null) ...[
                             const SizedBox(height: 12),
-                            DropdownButtonFormField<int>(
-                              decoration:
-                                  const InputDecoration(labelText: 'اختر الفاتورة'),
-                              value: selectedFactureId,
-                              items: allFactures.map((facture) {
-                                return DropdownMenuItem<int>(
-                                  value: facture['id'] as int,
-                                  child: Text(
-                                      'فاتورة رقم ${facture['id']} - ${facture['client_name']}'),
-                                );
-                              }).toList(),
-                              onChanged: (value) {
-                                setDialogState(() {
-                                  selectedFactureId = value;
-                                  selectedModelId = null;
-                                });
-                              },
-                            ),
-                            if (selectedFactureId != null) ...[
-                              const SizedBox(height: 12),
-                              FutureBuilder<List<dynamic>>(
-                                future: _getFactureModels(selectedFactureId!),
-                                builder: (context, snapshot) {
-                                  if (snapshot.hasData) {
-                                    return DropdownButtonFormField<int>(
+                            FutureBuilder<List<dynamic>>(
+                              future: _getFactureModels(selectedFactureId!),
+                              builder: (context, snapshot) {
+                                if (snapshot.connectionState ==
+                                    ConnectionState.waiting) {
+                                  return const CircularProgressIndicator();
+                                }
+                                if (snapshot.hasError) {
+                                  return const Text('خطأ في تحميل الموديلات');
+                                }
+                                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                                  return const Text('لا توجد موديلات متاحة');
+                                }
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    DropdownButtonFormField<int>(
                                       decoration: const InputDecoration(
                                           labelText: 'اختر الموديل'),
                                       value: selectedModelId,
-                                      items: snapshot.data!.map((model) {
+                                      items: snapshot.data!
+                                          .where((model) =>
+                                              model['available_quantity'] > 0)
+                                          .map((model) {
                                         return DropdownMenuItem<int>(
                                           value: model['model_id'] as int,
                                           child: Text(
-                                              '${model['model_name']} - كمية: ${model['quantity']}'),
+                                              '${model['model_name']} - الكمية المتاحة: ${model['available_quantity']}'),
                                         );
                                       }).toList(),
                                       onChanged: (value) {
                                         setDialogState(() {
                                           selectedModelId = value;
+                                          quantity = 1;
                                         });
                                       },
-                                    );
-                                  }
-                                  return const CircularProgressIndicator();
-                                },
-                              ),
-                            ],
-                            const SizedBox(height: 12),
-                            TextField(
-                              controller: quantityController,
-                              decoration:
-                                  const InputDecoration(labelText: 'الكمية المرتجعة'),
-                              keyboardType: TextInputType.number,
-                              onChanged: (value) {
-                                quantity = int.tryParse(value) ?? 1;
-                                setDialogState(() {});
+                                    ),
+                                    if (selectedModelId != null) ...[
+                                      const SizedBox(height: 12),
+                                      DropdownButtonFormField<int>(
+                                        decoration: const InputDecoration(
+                                            labelText: 'الكمية المرتجعة'),
+                                        value: quantity,
+                                        items: List.generate(
+                                          snapshot.data!
+                                              .firstWhere((m) =>
+                                                  m['model_id'] ==
+                                                  selectedModelId)[
+                                                  'available_quantity'] as int,
+                                          (index) => DropdownMenuItem(
+                                            value: index + 1,
+                                            child: Text('${index + 1}'),
+                                          ),
+                                        ),
+                                        onChanged: (value) {
+                                          setDialogState(() {
+                                            quantity = value!;
+                                          });
+                                        },
+                                      ),
+                                    ],
+                                  ],
+                                );
                               },
                             ),
-                            const SizedBox(height: 12),
-                            TextField(
-                              controller: notesController,
-                              decoration:
-                                  const InputDecoration(labelText: 'ملاحظات'),
-                              maxLines: 2,
-                              onChanged: (value) => notes = value,
-                            ),
                           ],
-                        ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: notesController,
+                            decoration:
+                                const InputDecoration(labelText: 'ملاحظات'),
+                            maxLines: 2,
+                            onChanged: (value) => notes = value,
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 16),
+                  ),
+                  const SizedBox(height: 16),
 
-                    // حالة البضاعة
+                  // حالة البضاعة
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('حالة البضاعة المرتجعة',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 16)),
+                          const SizedBox(height: 12),
+                          RadioListTile<bool>(
+                            title: const Text('جاهزة للبيع مرة أخرى'),
+                            subtitle: const Text('سيتم إضافتها مباشرة للمخزون'),
+                            value: true,
+                            groupValue: isReadyToSell,
+                            onChanged: (value) {
+                              setDialogState(() {
+                                isReadyToSell = value!;
+                                if (isReadyToSell) {
+                                  repairMaterials.clear();
+                                }
+                              });
+                            },
+                          ),
+                          RadioListTile<bool>(
+                            title: const Text('تحتاج إصلاح'),
+                            subtitle: const Text(
+                                'سيتم خصم مواد الإصلاح من المخزون'),
+                            value: false,
+                            groupValue: isReadyToSell,
+                            onChanged: (value) {
+                              setDialogState(() {
+                                isReadyToSell = value!;
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  if (!isReadyToSell) ...[
+                    const SizedBox(height: 16),
+                    // مواد الإصلاح
                     Card(
                       child: Padding(
                         padding: const EdgeInsets.all(16.0),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('حالة البضاعة المرتجعة',
-                                style: TextStyle(
-                                    fontWeight: FontWeight.bold, fontSize: 16)),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('مواد الإصلاح المطلوبة',
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16)),
+                                ElevatedButton.icon(
+                                  icon: const Icon(Icons.add),
+                                  label: const Text('إضافة مادة'),
+                                  onPressed: () {
+                                    _showAddRepairMaterialDialog(
+                                        repairMaterials, setDialogState);
+                                  },
+                                ),
+                              ],
+                            ),
                             const SizedBox(height: 12),
-                            RadioListTile<bool>(
-                              title: const Text('جاهزة للبيع مرة أخرى'),
-                              subtitle: const Text('سيتم إضافتها مباشرة للمخزون'),
-                              value: true,
-                              groupValue: isReadyToSell,
-                              onChanged: (value) {
-                                setDialogState(() {
-                                  isReadyToSell = value!;
-                                  if (isReadyToSell) {
-                                    repairMaterials.clear();
-                                  }
-                                });
-                              },
-                            ),
-                            RadioListTile<bool>(
-                              title: const Text('تحتاج إصلاح'),
-                              subtitle:
-                                  const Text('سيتم خصم مواد الإصلاح من المخزون'),
-                              value: false,
-                              groupValue: isReadyToSell,
-                              onChanged: (value) {
-                                setDialogState(() {
-                                  isReadyToSell = value!;
-                                });
-                              },
-                            ),
+                            if (repairMaterials.isEmpty)
+                              const Text('لم يتم إضافة مواد إصلاح بعد',
+                                  style: TextStyle(color: Colors.grey))
+                            else
+                              ...repairMaterials.asMap().entries.map((entry) {
+                                int index = entry.key;
+                                Map<String, dynamic> material = entry.value;
+                                final materialInfo = allMaterials.firstWhere(
+                                  (m) => m['id'] == material['material_id'],
+                                  orElse: () =>
+                                      {'code': 'غير معروف', 'name': 'غير معروف'},
+                                );
+                                return ListTile(
+                                  title: Text(
+                                      '${materialInfo['code']} - ${materialInfo['name']}'),
+                                  subtitle: Text(
+                                      'الكمية: ${material['quantity']} - التكلفة: ${_toDouble(material['cost']).toStringAsFixed(2)} دج'),
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.delete,
+                                        color: Colors.red),
+                                    onPressed: () {
+                                      setDialogState(() {
+                                        repairMaterials.removeAt(index);
+                                      });
+                                    },
+                                  ),
+                                );
+                              }).toList(),
+                            if (repairMaterials.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8.0),
+                                child: Text(
+                                  'إجمالي تكلفة الإصلاح (لكل القطع): ${totalRepairCost.toStringAsFixed(2)} دج',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.green),
+                                ),
+                              ),
                           ],
                         ),
                       ),
                     ),
-
-                    if (!isReadyToSell) ...[
-                      const SizedBox(height: 16),
-                      // مواد الإصلاح
-                      Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment:
- MainAxisAlignment.spaceBetween,
-
-                                children: [
-                                  const Text('مواد الإصلاح المطلوبة',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 16)),
-                                  ElevatedButton.icon(
-                                    icon: const Icon(Icons.add),
-                                    label: const Text('إضافة مادة'),
-                                    onPressed: () {
-                                      _showAddRepairMaterialDialog(
-                                          repairMaterials, setDialogState);
-                                    },
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 12),
-                              if (repairMaterials.isEmpty)
-                                const Text('لم يتم إضافة مواد إصلاح بعد',
-                                    style: TextStyle(color: Colors.grey))
-                              else
-                                ...repairMaterials
-                                    .asMap()
-                                    .entries
-                                    .map((entry) {
-                                  int index = entry.key;
-                                  Map<String, dynamic> material = entry.value;
-                                  final materialInfo = allMaterials.firstWhere(
-                                    (m) => m['id'] == material['material_id'],
-                                    orElse: () => {
-                                      'code': 'غير معروف',
-                                      'name': 'غير معروف'
-                                    },
-                                  );
-                                  return ListTile(
-                                    title: Text(
-                                        '${materialInfo['code']} - ${materialInfo['name']}'),
-                                    subtitle: Text(
-                                        'الكمية: ${material['quantity']} - التكلفة: ${_toDouble(material['cost']).toStringAsFixed(2)} دج'),
-                                    trailing: IconButton(
-                                      icon: const Icon(Icons.delete,
-                                          color: Colors.red),
-                                      onPressed: () {
-                                        setDialogState(() {
-                                          repairMaterials.removeAt(index);
-                                        });
-                                      },
-                                    ),
-                                  );
-                                }).toList(),
-                              if (repairMaterials.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 8.0),
-                                  child: Text(
-                                    'إجمالي تكلفة الإصلاح (لكل القطع): ${totalRepairCost.toStringAsFixed(2)} دج',
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.green),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
                   ],
-                ),
+                ],
               ),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed: (selectedFactureId != null &&
-                        selectedModelId != null &&
-                        quantity > 0)
-                    ? () async {
-                        final payload = {
-                          'facture_id': selectedFactureId,
-                          'model_id': selectedModelId,
-                          'quantity': quantity,
-                          'is_ready_to_sell': isReadyToSell,
-                          'repair_materials': repairMaterials,
-                          'repair_cost': totalRepairCost,
-                          'notes': notes,
-                        };
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: (selectedFactureId != null &&
+                      selectedModelId != null &&
+                      quantity > 0)
+                  ? () async {
+                      print('Selected Facture ID: $selectedFactureId');
+                      print('Selected Model ID: $selectedModelId');
+                      print('Return Quantity: $quantity');
+                      print('Is Ready to Sell: $isReadyToSell');
+                      print('Repair Materials: $repairMaterials');
 
-                        try {
-                          final response = await http.post(
-                            Uri.parse(baseUrl),
-                            headers: {'Content-Type': 'application/json'},
-                            body: jsonEncode(payload),
-                          );
+                      final payload = {
+                        'facture_id': selectedFactureId,
+                        'model_id': selectedModelId,
+                        'quantity': quantity,
+                        'is_ready_to_sell': isReadyToSell,
+                        'repair_materials': repairMaterials,
+                        'repair_cost': totalRepairCost,
+                        'notes': notes,
+                      };
 
-                          if (response.statusCode == 201) {
-                            Navigator.pop(context);
-                            _showSnackBar('تم إضافة المرتجع بنجاح!',
-                                color: Colors.green);
-                            await _fetchReturns();
-                          } else {
-                            final error = jsonDecode(response.body);
-                            _showSnackBar(
-                                'فشل إضافة المرتجع: ${error['error'] ?? 'خطأ غير معروف'}');
-                          }
-                        } catch (e) {
-                          _showSnackBar('خطأ في الاتصال: $e');
+                      print('Payload for Return Creation: $payload');
+
+                      try {
+                        final response = await http.post(
+                          Uri.parse(baseUrl),
+                          headers: {'Content-Type': 'application/json'},
+                          body: jsonEncode(payload),
+                        );
+
+                        print('Response Status: ${response.statusCode}');
+                        print('Response Body: ${response.body}');
+
+                        if (response.statusCode == 201) {
+                          Navigator.pop(context);
+                          _showSnackBar('تم إضافة المرتجع بنجاح!',
+                              color: Colors.green);
+                          await _fetchReturns();
+                        } else {
+                          final error = jsonDecode(response.body);
+                          _showSnackBar(
+                              'فشل إضافة المرتجع: ${error['error'] ?? 'خطأ غير معروف'}');
                         }
+                      } catch (e) {
+                        _showSnackBar('خطأ في الاتصال: $e');
                       }
-                    : null,
-                child: const Text('حفظ'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Future<List<dynamic>> _getFactureModels(int factureId) async {
-    final response = await http
-        .get(Uri.parse('http://localhost:8888/sales/factures/$factureId'));
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      return data['items'] as List;
-    }
-    return [];
-  }
-
-  void _showAddRepairMaterialDialog(
-  List<Map<String, dynamic>> repairMaterials,
-  void Function(void Function()) setDialogState,
-) {
-  int? selectedMaterialId;
-  double quantity = 1.0;
-
-  double unitPrice = 0.0; // سعر القطعة من المادة
-  final quantityController = TextEditingController(text: '1');
-  final unitPriceController = TextEditingController(text: '0'); // عرض فقط
-
-  showDialog(
-    context: context,
-    builder: (_) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: const Text('إضافة مادة إصلاح'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DropdownButtonFormField<int>(
-              decoration: const InputDecoration(labelText: 'اختر المادة'),
-              value: selectedMaterialId,
-              items: allMaterials
-                  .where((m) =>
-                      !repairMaterials.any((rm) => rm['material_id'] == m['id']))
-                  .map((material) {
-                return DropdownMenuItem<int>(
-                  value: material['id'] as int,
-                  child: Text('${material['code']} - ${material['name']}'),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() {
-                  selectedMaterialId = value;
-                  if (value != null) {
-                    final mat = allMaterials.firstWhere((m) => m['id'] == value);
-                    // غيّر المفتاح حسب جدولك (price / unit_price / cost ...)
-                    unitPrice = _toDouble(
-                      mat['price'] ?? mat['unit_price'] ?? mat['cost'] ?? 0,
-                    );
-                    unitPriceController.text = unitPrice.toStringAsFixed(2);
-                  }
-                });
-              },
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: quantityController,
-              decoration: const InputDecoration(labelText: 'الكمية'),
-              keyboardType: TextInputType.number,
-              onChanged: (v) => quantity = double.tryParse(v) ?? 1.0,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: unitPriceController,
-              decoration: const InputDecoration(
-                labelText: 'التكلفة للقطعة (تلقائي)',
-              ),
-              readOnly: true,
-              enabled: false,
+                    }
+                  : null,
+              child: const Text('حفظ'),
             ),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton(
-            onPressed: (selectedMaterialId != null && quantity > 0)
-                ? () {
-                    final totalLineCost = unitPrice * quantity;
-                    setDialogState(() {
-                      repairMaterials.add({
-                        'material_id': selectedMaterialId,
-                        'quantity': quantity,
-                        // نخزن التكلفة الإجمالية لهذا السطر
-                        'cost': totalLineCost,
-                      });
-                    });
-                    Navigator.pop(context);
-                  }
-                : null,
-            child: const Text('إضافة'),
-          ),
-        ],
-      ),
+        );
+      },
     ),
   );
 }
+  Future<List<dynamic>> _getFactureModels(int factureId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl$factureId'), // Changed to new route
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['items'] as List;
+      } else {
+        _showSnackBar('فشل تحميل موديلات الفاتورة');
+        return [];
+      }
+    } catch (e) {
+      _showSnackBar('خطأ في الاتصال: $e');
+      return [];
+    }
+  }
 
+  void _showAddRepairMaterialDialog(
+    List<Map<String, dynamic>> repairMaterials,
+    void Function(void Function()) setDialogState,
+  ) {
+    int? selectedMaterialId;
+    double quantity = 1.0;
+    double unitPrice = 0.0;
+    final quantityController = TextEditingController(text: '1');
+    final unitPriceController = TextEditingController(text: '0');
+
+    showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('إضافة مادة إصلاح'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<int>(
+                decoration: const InputDecoration(labelText: 'اختر المادة'),
+                value: selectedMaterialId,
+                items: allMaterials
+                    .where((m) =>
+                        !repairMaterials.any((rm) => rm['material_id'] == m['id']))
+                    .map((material) {
+                  return DropdownMenuItem<int>(
+                    value: material['id'] as int,
+                    child: Text('${material['code']} - ${material['name']}'),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    selectedMaterialId = value;
+                    if (value != null) {
+                      final mat = allMaterials.firstWhere((m) => m['id'] == value);
+                      unitPrice = _toDouble(
+                        mat['price'] ?? mat['unit_price'] ?? mat['cost'] ?? 0,
+                      );
+                      unitPriceController.text = unitPrice.toStringAsFixed(2);
+                    }
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: quantityController,
+                decoration: const InputDecoration(labelText: 'الكمية'),
+                keyboardType: TextInputType.number,
+                onChanged: (v) => quantity = double.tryParse(v) ?? 1.0,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: unitPriceController,
+                decoration: const InputDecoration(
+                  labelText: 'التكلفة للقطعة (تلقائي)',
+                ),
+                readOnly: true,
+                enabled: false,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: (selectedMaterialId != null && quantity > 0)
+                  ? () {
+                      final totalLineCost = unitPrice * quantity;
+                      setDialogState(() {
+                        repairMaterials.add({
+                          'material_id': selectedMaterialId,
+                          'quantity': quantity,
+                          'cost': totalLineCost,
+                        });
+                      });
+                      Navigator.pop(context);
+                    }
+                  : null,
+              child: const Text('إضافة'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Future<void> _deleteReturn(int returnId) async {
     final confirmed = await showDialog<bool>(
@@ -588,6 +624,40 @@ class _SewingReturnsSectionState extends State<SewingReturnsSection> {
     }
   }
 
+  // 1) Change your method signature:
+Future<void> _validateReturn(Map<String, dynamic> returnItem) async {
+  try {
+    final payload = {
+      'is_ready_to_sell': true,
+      'repair_cost': _toDouble(returnItem['repair_cost'] ?? 0.0),
+      'repair_materials': returnItem['repair_materials'] ?? [],
+    };
+
+    final response = await http.patch(
+      Uri.parse('$baseUrl${returnItem['id']}/validate'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(payload),
+    );
+
+    print('Validate Request Payload: $payload');
+    print('Validate Response Status: ${response.statusCode}');
+    print('Validate Response Body: ${response.body}');
+
+    if (response.statusCode == 200) {
+      _showSnackBar('تم تأكيد الجاهزية بنجاح!', color: Colors.green);
+      await _fetchReturns();
+    } else {
+      final error = jsonDecode(response.body);
+      _showSnackBar(
+        'فشل تأكيد الجاهزية: ${error['error'] ?? 'خطأ غير معروف'}',
+      );
+    }
+  } catch (e) {
+    _showSnackBar('خطأ في الاتصال: $e');
+  }
+}
+
+
   // ---------------- UI ----------------
   @override
   Widget build(BuildContext context) {
@@ -606,7 +676,6 @@ class _SewingReturnsSectionState extends State<SewingReturnsSection> {
       'ديسمبر'
     ];
 
-    // Stats using quantity not count of rows
     final totalQty = filteredReturns.fold<int>(
         0, (s, r) => s + _toInt(r['quantity']));
     final readyQty = filteredReturns
@@ -626,7 +695,6 @@ class _SewingReturnsSectionState extends State<SewingReturnsSection> {
           padding: const EdgeInsets.all(16.0),
           child: Column(
             children: [
-              // Top Row: Add button + filters (year/month)
               Row(
                 children: [
                   ElevatedButton.icon(
@@ -678,7 +746,6 @@ class _SewingReturnsSectionState extends State<SewingReturnsSection> {
 
               const SizedBox(height: 24),
 
-              // Statistics Cards
               Row(
                 children: [
                   Expanded(
@@ -797,7 +864,6 @@ class _SewingReturnsSectionState extends State<SewingReturnsSection> {
 
               const SizedBox(height: 24),
 
-              // Returns Table
               Expanded(
                 child: isLoading
                     ? const Center(child: CircularProgressIndicator())
@@ -819,9 +885,7 @@ class _SewingReturnsSectionState extends State<SewingReturnsSection> {
                                       child: DataTable(
                                         headingRowColor:
                                             MaterialStateProperty.all(
-                                          Theme.of(context)
-                                              .colorScheme
-                                              .primary,
+                                          Theme.of(context).colorScheme.primary,
                                         ),
                                         headingTextStyle: const TextStyle(
                                           color: Colors.white,
@@ -922,6 +986,16 @@ class _SewingReturnsSectionState extends State<SewingReturnsSection> {
                                                         _deleteReturn(
                                                             returnItem['id']),
                                                   ),
+                                                  if (!returnItem[
+                                                      'is_ready_to_sell'])
+                                                    IconButton(
+  icon: const Icon(Icons.check, color: Colors.blue),
+  tooltip: 'تأكيد الجاهزية',
+  onPressed: () async {
+    await _validateReturn(returnItem);
+    await _fetchReturns();
+  },
+),
                                                 ],
                                               )),
                                             ],
@@ -942,7 +1016,6 @@ class _SewingReturnsSectionState extends State<SewingReturnsSection> {
     );
   }
 
-  // ---------------- Details Dialog ----------------
   void _showReturnDetails(Map<String, dynamic> returnItem) {
     showDialog(
       context: context,
@@ -964,7 +1037,8 @@ class _SewingReturnsSectionState extends State<SewingReturnsSection> {
                         .toString()
                         .split(RegExp(r'[T ]'))
                         .first),
-                _buildDetailRow('الحالة:',
+                _buildDetailRow(
+                    'الحالة:',
                     returnItem['is_ready_to_sell'] ? 'جاهز للبيع' : 'يحتاج إصلاح'),
                 if (!(returnItem['is_ready_to_sell'] ?? true)) ...[
                   const Divider(),

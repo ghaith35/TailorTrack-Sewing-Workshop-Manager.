@@ -252,13 +252,15 @@ router.post('/recalc-global-prices', (Request req) async {
       }
 
       finalList.add({
-        'model_id': modelData['model_id'],
-        'model_name': modelData['model_name'],
-        'sizes': modelData['sizes'],
-        'nbr_of_sizes': modelData['nbr_of_sizes'],
-        'quantity': modelData['quantity'],
-        'global_price': globalPrice,
-      });
+  'id':        modelData['id'],        // ← inventory row id
+  'model_id':  modelData['model_id'],
+  'model_name':modelData['model_name'],
+  'sizes':     modelData['sizes'],
+  'nbr_of_sizes': modelData['nbr_of_sizes'],
+  'quantity':  modelData['quantity'],
+  'global_price': globalPrice,
+});
+
     }
 
     // Debug: Print the response

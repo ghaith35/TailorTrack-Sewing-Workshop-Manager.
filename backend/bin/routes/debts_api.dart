@@ -1,5 +1,3 @@
-// lib/routes/debts_api.dart
-
 import 'dart:convert';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
@@ -11,6 +9,13 @@ double _toDouble(dynamic v) {
   if (v is num) return v.toDouble();
   if (v is String) return double.tryParse(v) ?? 0.0;
   throw FormatException('Cannot convert ${v.runtimeType} to double');
+}
+double parseNum(dynamic v) {
+  if (v is String) {
+    return double.tryParse(v) ?? 0.0;
+  }
+  if (v is num) return v.toDouble();
+  return 0.0;
 }
 
 Router getDebtsRoutes(PostgreSQLConnection db) {
@@ -72,7 +77,7 @@ Router getDebtsRoutes(PostgreSQLConnection db) {
           'total_purchases' : purchases,
           'total_paid'      : onCreated + extraPaid,
           'debt'            : purchases - (onCreated + extraPaid),
-          'date'            : r[6].toString(),  // ISO date of last purchase
+          'date'            : r[6].toString(),
         };
       }).toList();
 
@@ -227,7 +232,7 @@ Router getDebtsRoutes(PostgreSQLConnection db) {
           'total_invoiced' : invoiced,
           'total_paid'     : onCreated + extraPaid,
           'debt'           : invoiced - (onCreated + extraPaid),
-          'date'           : r[7].toString(),  // ISO date of last invoice
+          'date'           : r[7].toString(),
         };
       }).toList();
 
@@ -249,68 +254,237 @@ Router getDebtsRoutes(PostgreSQLConnection db) {
 
   // POST /debts/clients/<id>/pay — apply a payment to oldest invoices
   router.post('/clients/<id>/pay', (Request req, String id) async {
-    try {
-      final payload = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-      final amount  = (payload['amount'] as num).toDouble();
-      double remaining = amount;
+  try {
+    final payload = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    final amount = (payload['amount'] as num).toDouble();
+    final fromDeposit = payload['from_deposit'] as bool? ?? false;
+    double remaining = amount;
 
-      final invoices = await db.query(r'''
-        SELECT
-          f.id,
-          COALESCE(f.amount_paid_on_creation, 0) AS amount_paid_on_creation,
-          COALESCE((
-            SELECT SUM(amount_paid)
-            FROM sewing.facture_payments
-            WHERE facture_id = f.id
-          ), 0)                                 AS extra_paid,
-          f.total_amount
-        FROM sewing.factures f
-        WHERE f.client_id = @cid
-        ORDER BY f.facture_date, f.id;
-      ''', substitutionValues: {'cid': int.parse(id)});
-
-      for (var r in invoices) {
-        final fid        = r[0] as int;
-        final onCreation = _toDouble(r[1]);
-        final extraPaid  = _toDouble(r[2]);
-        final totalAmt   = _toDouble(r[3]);
-        final paidSoFar  = onCreation + extraPaid;
-        final unpaid     = totalAmt - paidSoFar;
-        if (unpaid <= 0) continue;
-
-        final pay = unpaid >= remaining ? remaining : unpaid;
-        await db.query(r'''
-          INSERT INTO sewing.facture_payments
-          (facture_id, amount_paid, payment_date)
-          VALUES (@fid, @pay, CURRENT_DATE);
-        ''', substitutionValues: {
-          'fid': fid,
-          'pay': pay,
-        });
-
-        remaining -= pay;
-        if (remaining <= 0) break;
-      }
-
-      return Response.ok(
-        jsonEncode({
-          'status'          : 'success',
-          'amount_used'     : amount - remaining,
-          'amount_remaining': remaining,
-        }),
-        headers: {'Content-Type': 'application/json'},
+    // Validate deposit if used
+    if (fromDeposit) {
+      final depositRes = await db.query(
+        'SELECT COALESCE(SUM(amount), 0) FROM sewing.deposits WHERE client_id = @cid AND used = FALSE',
+        substitutionValues: {'cid': int.parse(id)},
       );
+      final availableDeposit = parseNum(depositRes.first[0]);
+      if (availableDeposit < amount) {
+        return Response(400,
+            body: jsonEncode({
+              'error': 'Insufficient deposit',
+              'available': availableDeposit,
+              'requested': amount,
+            }),
+            headers: {'Content-Type': 'application/json'});
+      }
+    }
+
+    final invoices = await db.query(r'''
+      SELECT
+        f.id,
+        COALESCE(f.amount_paid_on_creation, 0) AS amount_paid_on_creation,
+        COALESCE((SELECT SUM(amount_paid) FROM sewing.facture_payments WHERE facture_id = f.id), 0) AS extra_paid,
+        f.total_amount
+      FROM sewing.factures f
+      WHERE f.client_id = @cid
+      ORDER BY f.facture_date, f.id;
+    ''', substitutionValues: {'cid': int.parse(id)});
+
+    for (var r in invoices) {
+      final fid = r[0] as int;
+      final onCreation = parseNum(r[1]);
+      final extraPaid = parseNum(r[2]);
+      final totalAmt = parseNum(r[3]);
+      final paidSoFar = onCreation + extraPaid;
+      final unpaid = totalAmt - paidSoFar;
+      if (unpaid <= 0) continue;
+
+      final pay = unpaid >= remaining ? remaining : unpaid;
+      await db.query(r'''
+        INSERT INTO sewing.facture_payments
+        (facture_id, amount_paid, payment_date, from_deposit)
+        VALUES (@fid, @pay, CURRENT_DATE, @fromDeposit);
+      ''', substitutionValues: {
+        'fid': fid,
+        'pay': pay,
+        'fromDeposit': fromDeposit,
+      });
+
+      remaining -= pay;
+      if (remaining <= 0) break;
+    }
+
+    // Mark deposit as used if applicable
+    if (fromDeposit && (amount - remaining) > 0) {
+      await db.query(
+        'UPDATE sewing.deposits SET used = TRUE WHERE client_id = @cid AND used = FALSE LIMIT 1',
+        substitutionValues: {'cid': int.parse(id)},
+      );
+    }
+
+    return Response.ok(
+      jsonEncode({
+        'status': 'success',
+        'amount_used': amount - remaining,
+        'amount_remaining': remaining,
+      }),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } catch (e) {
+    print('Error in /clients/<id>/pay: $e');
+    return Response.internalServerError(
+      body: jsonEncode({
+        'error': 'Payment processing failed',
+        'details': e.toString(),
+      }),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
+  router.get('/clients/deposits', (Request req) async {
+    try {
+      final rows = await db.query(r'''
+        SELECT p.id, p.client_id, c.full_name, p.value, p.amount, p.payment_date::text, p.notes
+        FROM sewing.client_credit_payments p
+        JOIN sewing.clients c ON c.id = p.client_id
+        ORDER BY p.payment_date DESC;
+      ''');
+      final data = rows.map((r) => {
+        'id': r[0] as int,
+        'client_id': r[1] as int,
+        'client_name': r[2] as String?,
+        'value': _toDouble(r[3]),
+        'amount': _toDouble(r[4]),
+        'payment_date': r[5] as String,
+        'notes': r[6] as String?,
+      }).toList();
+      return Response.ok(jsonEncode(data), headers: {'Content-Type':'application/json'});
     } catch (e) {
-      print('Error in /debts/clients/<id>/pay: $e');
       return Response.internalServerError(
-        body: jsonEncode({
-          'error'  : 'Payment processing failed',
-          'details': e.toString(),
-        }),
-        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'error':'Failed to fetch deposits','details':e.toString()}),
+        headers: {'Content-Type':'application/json'},
       );
     }
   });
+
+  router.post('/clients/clients/deposits', (Request req) async {
+    return Response.notFound('Use /clients/deposits');
+  });
+
+  router.post('/clients/deposits', (Request req) async {
+    try {
+      final body = jsonDecode(await req.readAsString()) as Map<String,dynamic>;
+      final cid = body['client_id'] as int;
+      final amt = (body['amount'] as num).toDouble();
+      final notes = body['notes'] as String?;
+      final result = await db.query(r'''
+        INSERT INTO sewing.client_credit_payments(client_id, amount, value, notes)
+        VALUES (@cid, @amt, @amt, @notes)
+        RETURNING id;
+      ''', substitutionValues: {'cid':cid,'amt':amt,'notes':notes});
+      return Response.ok(jsonEncode({'status':'success','id':result.first[0]}), headers: {'Content-Type':'application/json'});
+    } catch(e) {
+      return Response.internalServerError(
+        body: jsonEncode({'error':'Failed to create deposit','details':e.toString()}),
+        headers: {'Content-Type':'application/json'},
+      );
+    }
+  });
+
+  router.put('/clients/deposits/<id>', (Request req, String id) async {
+    try {
+      final body = jsonDecode(await req.readAsString()) as Map<String,dynamic>;
+      final amt = (body['amount'] as num).toDouble();
+      final notes = body['notes'] as String?;
+      await db.query(r'''
+        UPDATE sewing.client_credit_payments
+        SET amount = @amt, notes = @notes
+        WHERE id = @id;
+      ''', substitutionValues:{'amt':amt,'notes':notes,'id':int.parse(id)});
+      return Response.ok(jsonEncode({'status':'success'}), headers: {'Content-Type':'application/json'});
+    } catch(e) {
+      return Response.internalServerError(
+        body: jsonEncode({'error':'Failed to edit deposit','details':e.toString()}),
+        headers: {'Content-Type':'application/json'},
+      );
+    }
+  });
+
+  router.delete('/clients/deposits/<id>', (Request req, String id) async {
+    try {
+      await db.query(r'DELETE FROM sewing.client_credit_payments WHERE id = @id;', substitutionValues:{'id':int.parse(id)});
+      return Response.ok(jsonEncode({'status':'success'}), headers: {'Content-Type':'application/json'});
+    } catch(e) {
+      return Response.internalServerError(
+        body: jsonEncode({'error':'Failed to delete deposit','details':e.toString()}),
+        headers: {'Content-Type':'application/json'},
+      );
+    }
+  });
+router.post('/clients/<id>/deposit/use', (Request req, String id) async {
+  try {
+    final bodyRaw = await req.readAsString();
+    print('>>> /deposit/use body: $bodyRaw');
+    final body = jsonDecode(bodyRaw) as Map<String, dynamic>;
+
+    if (!body.containsKey('amount')) {
+      return Response.badRequest(
+        body: jsonEncode({'error': 'Missing "amount" field'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+
+    final requested = (body['amount'] as num).toDouble();
+    final cid = int.parse(id);
+
+    final rows = await db.query(r'''
+      SELECT id, amount
+      FROM sewing.client_credit_payments
+      WHERE client_id = @cid AND amount > 0
+      ORDER BY payment_date, id
+    ''', substitutionValues: {'cid': cid});
+
+    double totalAvail = rows.fold(0.0, (sum, r) => sum + _toDouble(r[1]));
+    final toUse = requested <= totalAvail ? requested : totalAvail;
+    double remainingToUse = toUse;
+
+    for (final r in rows) {
+      final depId = r[0] as int;
+      final avail = _toDouble(r[1]);
+      if (avail <= 0) continue;
+
+      final useAmt = avail >= remainingToUse ? remainingToUse : avail;
+      final newAmt = avail - useAmt;
+
+      // Always update the amount, even if it's zero
+      await db.query(r'''
+        UPDATE sewing.client_credit_payments
+          SET amount = @newAmt
+        WHERE id = @depId
+      ''', substitutionValues: {
+        'newAmt': newAmt,
+        'depId': depId,
+      });
+
+      remainingToUse -= useAmt;
+      if (remainingToUse <= 0) break;
+    }
+
+    return Response.ok(
+      jsonEncode({
+        'status': 'success',
+        'amount_requested': requested,
+        'amount_used': toUse,
+      }),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } catch (e, st) {
+    print('Error in /clients/<id>/deposit/use: $e\n$st');
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to use deposit', 'details': e.toString()}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
 
   return router;
 }

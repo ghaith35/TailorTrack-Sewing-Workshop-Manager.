@@ -189,11 +189,13 @@ class _DesignExpensesSectionState extends State<DesignExpensesSection> {
   }
 
   // -------------------- ADD / EDIT --------------------
-  Future<void> _addOrEdit({Map? existing}) async {
+    Future<void> _addOrEdit({Map? existing}) async {
+    final _formKey = GlobalKey<FormState>();
+
+    // common controllers / state
     String type = existing?['expense_type'] ?? typeLabels.keys.first;
     final descCtl   = TextEditingController(text: existing?['description'] ?? '');
     final amountCtl = TextEditingController(text: existing?['amount']?.toString() ?? '');
-
     DateTime expDate = existing != null
         ? DateTime.tryParse(existing['expense_date'] ?? '') ?? DateTime.now()
         : DateTime.now();
@@ -206,6 +208,7 @@ class _DesignExpensesSectionState extends State<DesignExpensesSection> {
     );
     double totalRM = (existing?['amount'] as num?)?.toDouble() ?? 0.0;
 
+    // preload materials if editing a raw_materials entry
     if (type == 'raw_materials' && selTypeId != null) {
       await _fetchMaterialsByType(selTypeId);
     }
@@ -234,160 +237,184 @@ class _DesignExpensesSectionState extends State<DesignExpensesSection> {
 
           return AlertDialog(
             title: Text(existing == null ? 'إضافة مصروف' : 'تعديل مصروف'),
-            content: SingleChildScrollView(
-              child: SizedBox(
-                width: 480,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DropdownButtonFormField<String>(
-                      value: type,
-                      decoration: const InputDecoration(labelText: 'النوع'),
-                      items: typeLabels.entries
-                          .map((e) => DropdownMenuItem(
-                                value: e.key,
-                                child: Text(e.value['label'] as String),
-                              ))
-                          .toList(),
-                      onChanged: (v) async {
-                        if (v == null) return;
-                        type = v;
-                        if (type == 'raw_materials') {
-                          selTypeId = null;
-                          selMatId  = null;
-                          qtyCtl.text = '';
-                          priceCtl.text = '0.00';
-                          totalRM = 0;
-                        }
-                        setD(() {});
-                      },
-                    ),
-                    const SizedBox(height: 12),
-
-                    if (type == 'raw_materials') ...[
-                      DropdownButtonFormField<int>(
-                        value: selTypeId,
-                        decoration: const InputDecoration(labelText: 'نوع المادة'),
-                        items: materialTypes
-                            .map((t) => DropdownMenuItem<int>(
-                                  value: t['id'] as int,
-                                  child: Text(t['name']),
+            content: Form(
+              key: _formKey,
+              child: SingleChildScrollView(
+                child: SizedBox(
+                  width: 480,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 1) Expense type selector
+                      DropdownButtonFormField<String>(
+                        value: type,
+                        decoration: const InputDecoration(labelText: 'النوع'),
+                        items: typeLabels.entries
+                            .map((e) => DropdownMenuItem(
+                                  value: e.key,
+                                  child: Text(e.value['label'] as String),
                                 ))
                             .toList(),
                         onChanged: (v) async {
-                          selTypeId = v;
-                          selMatId = null;
-                          priceCtl.text = '0.00';
-                          totalRM = 0;
-                          if (v != null) await _fetchMaterialsByType(v);
+                          if (v == null) return;
+                          type = v;
+                          // reset raw-materials fields when switching
+                          if (type == 'raw_materials') {
+                            selTypeId = null;
+                            selMatId  = null;
+                            qtyCtl.text = '';
+                            priceCtl.text = '0.00';
+                            totalRM = 0;
+                          }
                           setD(() {});
                         },
+                        validator: (v) => v == null ? 'اختر النوع' : null,
                       ),
                       const SizedBox(height: 12),
-                      DropdownButtonFormField<int>(
-                        value: selMatId,
-                        decoration: const InputDecoration(labelText: 'المادة'),
-                        items: materials
-                            .map((m) => DropdownMenuItem<int>(
-                                  value: m['id'] as int,
-                                  child: Text(m['code']),
-                                ))
-                            .toList(),
-                        onChanged: (v) {
-                          selMatId = v;
-                          if (v != null) {
-                            final m = materials.firstWhere((e) => e['id'] == v);
-                            final p = (m['unit_price'] ?? m['last_unit_price'] ?? 0) as num;
-                            priceCtl.text = p.toStringAsFixed(2);
-                          } else {
+
+                      // 2) If raw_materials → material type / material / qty
+                      if (type == 'raw_materials') ...[
+                        DropdownButtonFormField<int>(
+                          value: selTypeId,
+                          decoration: const InputDecoration(labelText: 'نوع المادة'),
+                          items: materialTypes
+                              .map((t) => DropdownMenuItem<int>(
+                                    value: t['id'] as int,
+                                    child: Text(t['name']),
+                                  ))
+                              .toList(),
+                          onChanged: (v) async {
+                            selTypeId = v;
+                            selMatId = null;
                             priceCtl.text = '0.00';
-                          }
-                          recalcTotal();
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: qtyCtl,
-                        decoration: const InputDecoration(labelText: 'الكمية'),
-                        keyboardType:
-                            const TextInputType.numberWithOptions(decimal: true),
-                        onChanged: (_) => recalcTotal(),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: priceCtl,
-                        readOnly: true,
-                        decoration: const InputDecoration(labelText: 'سعر الوحدة'),
-                      ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'الإجمالي: ${totalRM.toStringAsFixed(2)}',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ] else ...[
-                      if (type == 'custom') ...[
-                        TextField(
-                          controller: descCtl,
-                          decoration: const InputDecoration(labelText: 'الوصف'),
+                            totalRM = 0;
+                            if (v != null) await _fetchMaterialsByType(v);
+                            setD(() {});
+                          },
+                          validator: (v) => v == null ? 'اختر نوع المادة' : null,
                         ),
                         const SizedBox(height: 12),
+                        DropdownButtonFormField<int>(
+                          value: selMatId,
+                          decoration: const InputDecoration(labelText: 'المادة'),
+                          items: materials
+                              .map((m) => DropdownMenuItem<int>(
+                                    value: m['id'] as int,
+                                    child: Text(m['code']),
+                                  ))
+                              .toList(),
+                          onChanged: (v) {
+                            selMatId = v;
+                            if (v != null) {
+                              final m = materials.firstWhere((e) => e['id'] == v);
+                              final p = (m['unit_price'] ?? m['last_unit_price'] ?? 0) as num;
+                              priceCtl.text = p.toStringAsFixed(2);
+                            } else {
+                              priceCtl.text = '0.00';
+                            }
+                            recalcTotal();
+                          },
+                          validator: (v) => v == null ? 'اختر المادة' : null,
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: qtyCtl,
+                          decoration: const InputDecoration(labelText: 'الكمية'),
+                          keyboardType:
+                              const TextInputType.numberWithOptions(decimal: true),
+                          onChanged: (_) => recalcTotal(),
+                          validator: (v) {
+                            final q = double.tryParse(v ?? '') ?? 0;
+                            if (q <= 0) return 'أدخل كمية صحيحة';
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'الإجمالي: ${totalRM.toStringAsFixed(2)}',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ] else ...[
+                        // 3) If custom → description
+                        if (type == 'custom') ...[
+                          TextFormField(
+                            controller: descCtl,
+                            decoration:
+                                const InputDecoration(labelText: 'الوصف'),
+                            validator: (v) {
+                              if (v == null || v.trim().isEmpty) {
+                                return 'الوصف مطلوب';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        // 4) Amount for all other types
+                        TextFormField(
+                          controller: amountCtl,
+                          decoration: const InputDecoration(labelText: 'المبلغ'),
+                          keyboardType:
+                              const TextInputType.numberWithOptions(decimal: true),
+                          validator: (v) {
+                            final a = double.tryParse(v ?? '') ?? -1;
+                            if (a <= 0) return 'أدخل مبلغ صحيح';
+                            return null;
+                          },
+                        ),
                       ],
-                      TextField(
-                        controller: amountCtl,
-                        decoration: const InputDecoration(labelText: 'المبلغ'),
-                        keyboardType:
-                            const TextInputType.numberWithOptions(decimal: true),
+
+                      const SizedBox(height: 12),
+
+                      // 5) Date picker
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                            'التاريخ: ${expDate.toIso8601String().substring(0, 10)}'),
+                        trailing: const Icon(Icons.calendar_today),
+                        onTap: pickDate,
                       ),
                     ],
-
-                    const SizedBox(height: 12),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text('التاريخ: ${expDate.toIso8601String().substring(0, 10)}'),
-                      trailing: const Icon(Icons.calendar_today),
-                      onTap: pickDate,
-                    )
-                  ],
+                  ),
                 ),
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+              TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('إلغاء')),
               ElevatedButton(
                 onPressed: () async {
-                  try {
-                    Map<String, dynamic> payload;
-                    if (type == 'raw_materials') {
-                      final q = double.tryParse(qtyCtl.text) ?? 0;
-                      if (selTypeId == null || selMatId == null || q <= 0) {
-                        _snack('أكمل بيانات المواد الخام', err: true);
-                        return;
-                      }
-                      payload = {
-                        'expense_type'    : type,
-                        'description'     : '',
-                        'expense_date'    : expDate.toIso8601String(),
-                        'material_type_id': selTypeId,
-                        'material_id'     : selMatId,
-                        'quantity'        : q,
-                      };
-                    } else {
-                      final amt = double.tryParse(amountCtl.text);
-                      if (amt == null || amt <= 0) {
-                        _snack('أدخل مبلغ صحيح', err: true);
-                        return;
-                      }
-                      payload = {
-                        'expense_type': type,
-                        'description' : type == 'custom' ? descCtl.text.trim() : '',
-                        'amount'      : amt,
-                        'expense_date': expDate.toIso8601String(),
-                      };
-                    }
+                  // run validators
+                  if (!_formKey.currentState!.validate()) return;
 
+                  // build payload
+                  Map<String, dynamic> payload;
+                  if (type == 'raw_materials') {
+                    payload = {
+                      'expense_type': type,
+                      'description': '',
+                      'expense_date': expDate.toIso8601String(),
+                      'material_type_id': selTypeId,
+                      'material_id': selMatId,
+                      'quantity': double.parse(qtyCtl.text),
+                    };
+                  } else {
+                    payload = {
+                      'expense_type': type,
+                      'description': type == 'custom'
+                          ? descCtl.text.trim()
+                          : '',
+                      'amount': double.parse(amountCtl.text),
+                      'expense_date': expDate.toIso8601String(),
+                    };
+                  }
+
+                  // send to server
+                  try {
                     http.Response resp;
                     if (existing == null) {
                       resp = await http.post(Uri.parse(apiUrl),
@@ -399,7 +426,8 @@ class _DesignExpensesSectionState extends State<DesignExpensesSection> {
                         _snack('فشل الإضافة: ${resp.body}', err: true);
                       }
                     } else {
-                      resp = await http.put(Uri.parse('$apiUrl${existing['id']}'),
+                      resp = await http.put(
+                          Uri.parse('$apiUrl${existing['id']}'),
                           headers: {'Content-Type': 'application/json'},
                           body: jsonEncode(payload));
                       if (resp.statusCode == 200) {

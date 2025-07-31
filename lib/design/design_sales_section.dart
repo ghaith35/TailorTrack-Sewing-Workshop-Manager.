@@ -318,95 +318,112 @@ class _DesignSalesSectionState extends State<DesignSalesSection> {
         items.fold<double>(0, (s, it) => s + it['quantity'] * it['unit_price']);
 
     Future<void> addItem(StateSetter setOuter) async {
-      int? modelId;
-      final qtyCtrl = TextEditingController();
-      final priceCtrl = TextEditingController();
+  int? modelId;
+  final qtyCtrl   = TextEditingController();
+  final priceCtrl = TextEditingController();
 
-      // models with stock > 0
-      final available = models.where((m) => parseInt(m['available_quantity']) > 0).toList();
-      if (available.isEmpty) {
-        showSnack(context, 'لا يوجد مخزون متاح', color: Colors.orange);
-        return;
-      }
+  // 1) Only products with stock > 0
+  final availableModels = models
+      .where((m) => parseInt(m['available_quantity']) > 0)
+      .toList();
+  if (availableModels.isEmpty) {
+    showSnack(context, 'لا يوجد مخزون متاح', color: Colors.orange);
+    return;
+  }
 
-      await showDialog(
-        context: context,
-        builder: (_) => StatefulBuilder(
-          builder: (ctx, st) => AlertDialog(
-            title: const Text('إضافة منتج'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<int>(
-                    decoration: const InputDecoration(labelText: 'اختر المنتج'),
-                    value: modelId,
-                    items: available
-                        .map((m) => DropdownMenuItem<int>(
-                              value: m['id'] as int,
-                              child: Text('${m['name']} (متاح: ${m['available_quantity']})'),
-                            ))
-                        .toList(),
-                    onChanged: (v) => st(() => modelId = v),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: qtyCtrl,
-                    decoration: const InputDecoration(labelText: 'الكمية'),
-                    keyboardType: TextInputType.number,
-                  ),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: priceCtrl,
-                    decoration: const InputDecoration(labelText: 'سعر البيع'),
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  ),
-                ],
+  // 2) Show dialog
+  await showDialog(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx2, setDialog) => AlertDialog(
+        title: const Text('إضافة منتج'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Product dropdown
+              DropdownButtonFormField<int>(
+                decoration: const InputDecoration(labelText: 'اختر المنتج'),
+                items: availableModels.map((m) {
+                  return DropdownMenuItem<int>(
+                    value: m['id'] as int,
+                    child: Text('${m['name']} (متاح: ${m['available_quantity']})'),
+                  );
+                }).toList(),
+                onChanged: (v) => setDialog(() => modelId = v),
               ),
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-              ElevatedButton(
-                onPressed: () {
-                  if (modelId == null) {
-                    showSnack(context, 'اختر المنتج');
-                    return;
-                  }
-                  final q = int.tryParse(qtyCtrl.text) ?? 0;
-                  final p = double.tryParse(priceCtrl.text) ?? 0;
-                  if (q <= 0 || p <= 0) {
-                    showSnack(context, 'أدخل قيم صحيحة');
-                    return;
-                  }
-                  final prod = available.firstWhere((m) => m['id'] == modelId);
-                  final avail = parseInt(prod['available_quantity']);
-                  if (q > avail) {
-                    showSnack(context, 'الكمية أكبر من المتاح ($avail)');
-                    return;
-                  }
-                  final idx = items.indexWhere((i) => i['model_id'] == modelId);
-                  if (idx != -1) {
-                    items[idx]['quantity'] = q;
-                    items[idx]['unit_price'] = p;
-                  } else {
-                    items.add({
-                      'model_id': modelId,
-                      'model_name': prod['name'],
-                      'quantity': q,
-                      'unit_price': p,
-                      'available_quantity': avail,
-                    });
-                  }
-                  setOuter(() {});
-                  Navigator.pop(ctx);
-                },
-                child: const Text('إضافة'),
+              const SizedBox(height: 12),
+              // Quantity
+              TextField(
+                controller: qtyCtrl,
+                decoration: const InputDecoration(labelText: 'الكمية'),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 8),
+              // Price
+              TextField(
+                controller: priceCtrl,
+                decoration: const InputDecoration(labelText: 'سعر البيع'),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
               ),
             ],
           ),
         ),
-      );
-    }
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx2), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () {
+              // 3) Validation
+              if (modelId == null) {
+                showSnack(context, 'يرجى اختيار المنتج', color: Colors.red);
+                return;
+              }
+              final q = int.tryParse(qtyCtrl.text) ?? 0;
+              final p = double.tryParse(priceCtrl.text) ?? 0.0;
+              if (q <= 0 || p <= 0) {
+                showSnack(context, 'يرجى إدخال قيم صحيحة', color: Colors.red);
+                return;
+              }
+
+              final prod  = availableModels.firstWhere((m) => m['id'] == modelId);
+              final avail = parseInt(prod['available_quantity']);
+              if (q > avail) {
+                showSnack(context, 'الكمية أكبر من المتاح (متاح: $avail)', color: Colors.red);
+                return;
+              }
+
+              // 4) Merge only if same model AND same unit_price
+              final existingIdx = items.indexWhere((i) =>
+                i['model_id']   == modelId &&
+                (i['unit_price'] as double) == p
+              );
+
+              if (existingIdx != -1) {
+                // Update quantity of that exact line
+                items[existingIdx]['quantity'] = q;
+              } else {
+                // New combination → push a new line
+                items.add({
+                  'model_id'           : modelId,
+                  'model_name'         : prod['name'],
+                  'quantity'           : q,
+                  'unit_price'         : p,
+                  'available_quantity' : avail,
+                });
+              }
+
+              // 5) Refresh outer dialog & close
+              setOuter(() {});
+              Navigator.pop(ctx2);
+            },
+            child: const Text('إضافة'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 
     await showDialog(
       context: context,
@@ -444,11 +461,11 @@ class _DesignSalesSectionState extends State<DesignSalesSection> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: factureNameCtrl,
-                    decoration: const InputDecoration(labelText: 'اسم الفاتورة (إجباري)'),
-                  ),
-                  const SizedBox(height: 12),
+                  // TextField(
+                  //   controller: factureNameCtrl,
+                  //   decoration: const InputDecoration(labelText: 'اسم الفاتورة (إجباري)'),
+                  // ),
+                  // const SizedBox(height: 12),
                   DropdownButtonFormField<int>(
                     decoration: const InputDecoration(labelText: 'اختر العميل'),
                     value: clientId,
@@ -555,10 +572,10 @@ class _DesignSalesSectionState extends State<DesignSalesSection> {
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
             ElevatedButton(
               onPressed: () async {
-                if (factureNameCtrl.text.trim().isEmpty) {
-                  showSnack(context, 'اسم الفاتورة مطلوب', color: Colors.red);
-                  return;
-                }
+                // if (factureNameCtrl.text.trim().isEmpty) {
+                //   showSnack(context, 'اسم الفاتورة مطلوب', color: Colors.red);
+                //   return;
+                // }
                 if (clientId == null) {
                   showSnack(context, 'اختر العميل', color: Colors.red);
                   return;
@@ -581,7 +598,6 @@ class _DesignSalesSectionState extends State<DesignSalesSection> {
                   'items': items
                       .map((e) => {
                             'model_id': e['model_id'],
-                            'color': null,
                             'quantity': e['quantity'],
                             'unit_price': e['unit_price'],
                           })

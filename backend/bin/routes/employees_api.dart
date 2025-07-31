@@ -485,6 +485,34 @@ Router getEmployeesRoutes(PostgreSQLConnection db) {
       headers: {'Content-Type': 'application/json'},
     );
   });
+// Bulk attendance creation
+router.post('/attendance/bulk', (Request req) async {
+  final List<dynamic> attendanceRecords = jsonDecode(await req.readAsString());
+
+  try {
+    for (var record in attendanceRecords) {
+      final empId = record['employee_id'];
+      final date = record['date'];
+      final checkIn = record['check_in'];
+      final checkOut = record['check_out'];
+
+      await db.query('''
+        INSERT INTO sewing.employee_attendance (employee_id, date, check_in, check_out)
+        VALUES (@eid, @date, @in, @out)
+        ON CONFLICT (employee_id, date) DO UPDATE SET check_in = @in, check_out = @out
+      ''', substitutionValues: {
+        'eid': empId,
+        'date': date,
+        'in': checkIn,
+        'out': checkOut,
+      });
+    }
+    return Response.ok('{"status": "success"}', headers: {'Content-Type': 'application/json'});
+  } catch (e) {
+    print("ERROR: $e");
+    return Response.internalServerError(body: 'Internal Server Error: $e');
+  }
+});
 
 // =============================
 // =============================
@@ -909,34 +937,148 @@ router.delete('/attendance/<id|[0-9]+>', (Request req, String id) async {
 });
 
 // ─── Fetch all attendance ──────────────────────────────────
-router.get('/attendance', (Request req) async {
-  final rows = await db.query(r'''
+// in your getEmployeesRoutes()
+
+  // Fetch attendance, optionally filtered by month and/or day
+  router.get('/attendance', (Request req) async {
+    final qp = req.url.queryParameters;
+    final month = qp['month']; // “YYYY‑MM”
+    final day   = qp['day'];   // “DD” or null
+
+    // build date filters
+    String? startDate;
+    String? endDate;
+    String? exactDate;
+    if (month != null) {
+      final first = DateTime.parse('$month-01');
+      final last = DateTime(first.year, first.month + 1, 1).subtract(Duration(days:1));
+      startDate = '${first.year}-${first.month.toString().padLeft(2,'0')}-01';
+      endDate   = '${last.year}-${last.month.toString().padLeft(2,'0')}-${last.day.toString().padLeft(2,'0')}';
+    }
+    if (day != null && month != null) {
+      // if day is explicitly requested, override to exact-date
+      exactDate = '$month-${day.padLeft(2,'0')}';
+    }
+
+    // build SQL
+    final whereClauses = <String>['e.status = \'active\''];
+    final subs = <String, Object>{};
+    if (exactDate != null) {
+      whereClauses.add('a.date = @exact');
+      subs['exact'] = exactDate;
+    } else if (startDate != null && endDate != null) {
+      whereClauses.add('a.date BETWEEN @start AND @end');
+      subs['start'] = startDate;
+      subs['end']   = endDate;
+    }
+
+    final sql = '''
+      SELECT 
+        a.id,
+        a.employee_id,
+        e.first_name || ' ' || e.last_name AS employee_name,
+        to_char(a.date, 'YYYY-MM-DD')    AS date,
+        to_char(a.check_in, 'HH24:MI')   AS check_in,
+        to_char(a.check_out,'HH24:MI')   AS check_out
+      FROM sewing.employee_attendance a
+      JOIN sewing.employees e
+        ON e.id = a.employee_id
+      WHERE ${whereClauses.join(' AND ')}
+      ORDER BY a.date DESC
+    ''';
+
+    try {
+      final rows = await db.query(sql, substitutionValues: subs);
+      final data = rows.map((r) => {
+        'attendance_id' : r[0],
+        'employee_id'   : r[1],
+        'employee_name' : r[2],
+        'date'          : r[3],
+        'check_in'      : r[4],
+        'check_out'     : r[5],
+      }).toList();
+      return Response.ok(jsonEncode(data), headers: {'Content-Type':'application/json'});
+    } catch (e, st) {
+      print('Error fetching attendance: $e\n$st');
+      return Response.internalServerError(body: 'Server error');
+    }
+  });
+
+// ─── DAILY ATTENDANCE ──────────────────────────────────────────────────────────
+/// GET /employees/attendance/daily?month=YYYY-MM[&day=DD]
+/// Returns only that month or that single day’s attendance.
+router.get('/attendance/daily', (Request req) async {
+  final qp    = req.url.queryParameters;
+  final month = qp['month']; // e.g. “2025-07”
+  final day   = qp['day'];   // optional “01”–“31”
+
+  if (month == null) {
+    return Response(400, body: jsonEncode({'error': 'month is required'}));
+  }
+
+  // Build date filters
+  String?   startDate;
+  String?   endDate;
+  String?   exactDate;
+  try {
+    if (day != null) {
+      // single day
+      exactDate = '$month-${day.padLeft(2, '0')}';
+      // validate
+      DateTime.parse(exactDate);
+    } else {
+      // entire month
+      final first = DateTime.parse('$month-01');
+      final last  = DateTime(first.year, first.month + 1, 1).subtract(const Duration(days: 1));
+      startDate = '${first.year}-${first.month.toString().padLeft(2,'0')}-01';
+      endDate   = '${last.year}-${last.month.toString().padLeft(2,'0')}-${last.day.toString().padLeft(2,'0')}';
+    }
+  } catch (e) {
+    return Response(400, body: jsonEncode({'error': 'Invalid month/day format'}));
+  }
+
+  // Build WHERE clause
+  final where = StringBuffer("e.status='active'");
+  final subs  = <String, Object>{};
+  if (exactDate != null) {
+    where.write(' AND a.date = @exact');
+    subs['exact'] = exactDate;
+  } else {
+    where.write(' AND a.date BETWEEN @start AND @end');
+    subs['start'] = startDate!;
+    subs['end']   = endDate!;
+  }
+
+  final sql = '''
     SELECT 
       a.id,
       a.employee_id,
       e.first_name || ' ' || e.last_name AS employee_name,
-      to_char(a.date, 'YYYY-MM-DD')    AS date,
-      to_char(a.check_in, 'HH24:MI')   AS check_in,
-      to_char(a.check_out,'HH24:MI')   AS check_out
+      to_char(a.date, 'YYYY-MM-DD')  AS date,
+      to_char(a.check_in, 'HH24:MI') AS check_in,
+      to_char(a.check_out,'HH24:MI') AS check_out
     FROM sewing.employee_attendance a
     JOIN sewing.employees e
       ON e.id = a.employee_id
+    WHERE $where
     ORDER BY a.date DESC
-  ''');
+  ''';
 
-  final data = rows.map((r) => {
-    'attendance_id' : r[0],
-    'employee_id'   : r[1],
-    'employee_name' : r[2],
-    'date'          : r[3],
-    'check_in'      : r[4],
-    'check_out'     : r[5],
-  }).toList();
-
-  return Response.ok(
-    jsonEncode(data),
-    headers: {'Content-Type':'application/json'},
-  );
+  try {
+    final rows = await db.query(sql, substitutionValues: subs);
+    final data = rows.map((r) => {
+      'attendance_id': r[0],
+      'employee_id'  : r[1],
+      'employee_name': r[2],
+      'date'         : r[3],
+      'check_in'     : r[4],
+      'check_out'    : r[5],
+    }).toList();
+    return Response.ok(jsonEncode(data), headers: {'Content-Type':'application/json'});
+  } catch (e, st) {
+    print('❌ DAILY ATTENDANCE ERROR: $e\n$st');
+    return Response.internalServerError(body: 'Internal Server Error');
+  }
 });
 
   return router;

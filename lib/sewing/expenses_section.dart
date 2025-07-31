@@ -3,7 +3,9 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 class SewingExpensesSection extends StatefulWidget {
-  const SewingExpensesSection({super.key});
+    final String role;
+
+  const SewingExpensesSection({Key? key, required this.role}) : super(key: key);
 
   @override
   State<SewingExpensesSection> createState() => _SewingExpensesSectionState();
@@ -177,21 +179,24 @@ class _SewingExpensesSectionState extends State<SewingExpensesSection> {
   }
 
   Future<void> addOrEditExpense({Map? existing}) async {
-    String type = existing?['expense_type'] ?? typeLabels.keys.first;
-    final descriptionCtrl =
-        TextEditingController(text: existing?['description'] ?? '');
-    final amountCtrl =
-        TextEditingController(text: existing?['amount']?.toString() ?? '');
-    DateTime selectedDate = existing != null
-        ? DateTime.tryParse(existing['expense_date'] ?? '') ?? DateTime.now()
-        : DateTime.now();
+  String type = existing?['expense_type'] ?? typeLabels.keys.first;
+  final descriptionCtrl =
+      TextEditingController(text: existing?['description'] ?? '');
+  final amountCtrl =
+      TextEditingController(text: existing?['amount']?.toString() ?? '');
+  DateTime selectedDate = existing != null
+      ? DateTime.tryParse(existing['expense_date'] ?? '') ?? DateTime.now()
+      : DateTime.now();
+  final _formKey = GlobalKey<FormState>();
 
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text(existing == null ? 'إضافة مصروف' : 'تعديل مصروف'),
-          content: Column(
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: Text(existing == null ? 'إضافة مصروف' : 'تعديل مصروف'),
+        content: Form(
+          key: _formKey,
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
@@ -207,17 +212,29 @@ class _SewingExpensesSectionState extends State<SewingExpensesSection> {
               ),
               if (type == 'transport' || type == 'custom') ...[
                 const SizedBox(height: 12),
-                TextField(
+                TextFormField(
                   controller: descriptionCtrl,
                   decoration: const InputDecoration(labelText: 'وصف المصروف'),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) {
+                      return 'الوصف مطلوب';
+                    }
+                    return null;
+                  },
                 ),
               ],
               const SizedBox(height: 12),
-              TextField(
+              TextFormField(
                 controller: amountCtrl,
                 decoration: const InputDecoration(labelText: 'المبلغ'),
                 keyboardType:
                     const TextInputType.numberWithOptions(decimal: true),
+                validator: (v) {
+                  final parsed = double.tryParse(v ?? '');
+                  if (v == null || v.trim().isEmpty) return 'المبلغ مطلوب';
+                  if (parsed == null || parsed <= 0) return 'المبلغ غير صالح';
+                  return null;
+                },
               ),
               const SizedBox(height: 12),
               ListTile(
@@ -239,71 +256,66 @@ class _SewingExpensesSectionState extends State<SewingExpensesSection> {
               ),
             ],
           ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('إلغاء')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.primary,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () async {
-                final rawAmount = double.tryParse(amountCtrl.text);
-                if (rawAmount == null) {
-                  _showSnackBar('يرجى إدخال مبلغ صالح', color: Colors.red);
-                  return;
-                }
-                final payload = {
-                  'expense_type': type,
-                  'description': (type == 'transport' || type == 'custom')
-                      ? descriptionCtrl.text.trim()
-                      : '',
-                  'amount': rawAmount,
-                  'expense_date': selectedDate.toIso8601String(),
-                };
-                try {
-                  if (existing == null) {
-                    final response = await http.post(
-                      Uri.parse(apiUrl),
-                      headers: {'Content-Type': 'application/json'},
-                      body: jsonEncode(payload),
-                    );
-                    if (response.statusCode == 201) {
-                      _showSnackBar('تم إضافة المصروف بنجاح',
-                          color: Colors.green);
-                    } else {
-                      _showSnackBar('فشل إضافة المصروف: ${response.body}',
-                          color: Colors.red);
-                    }
-                  } else {
-                    final uri = Uri.parse('$apiUrl${existing['id']}');
-                    final response = await http.put(
-                      uri,
-                      headers: {'Content-Type': 'application/json'},
-                      body: jsonEncode(payload),
-                    );
-                    if (response.statusCode == 200) {
-                      _showSnackBar('تم تحديث المصروف بنجاح',
-                          color: Colors.green);
-                    } else {
-                      _showSnackBar('فشل تحديث المصروف: ${response.body}',
-                          color: Colors.red);
-                    }
-                  }
-                  Navigator.pop(context);
-                  await _fetchAllExpenses();
-                } catch (e) {
-                  _showSnackBar('خطأ في الاتصال: $e', color: Colors.red);
-                }
-              },
-              child: Text(existing == null ? '+ إضافة مصروف' : 'تحديث'),
-            ),
-          ],
         ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              if (!_formKey.currentState!.validate()) return;
+
+              final rawAmount = double.parse(amountCtrl.text);
+              final payload = {
+                'expense_type': type,
+                'description': (type == 'transport' || type == 'custom')
+                    ? descriptionCtrl.text.trim()
+                    : '',
+                'amount': rawAmount,
+                'expense_date': selectedDate.toIso8601String(),
+              };
+              try {
+                if (existing == null) {
+                  final response = await http.post(
+                    Uri.parse(apiUrl),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(payload),
+                  );
+                  if (response.statusCode == 201) {
+                    _showSnackBar('تم إضافة المصروف بنجاح', color: Colors.green);
+                  } else {
+                    _showSnackBar('فشل الإضافة: ${response.body}', color: Colors.red);
+                  }
+                } else {
+                  final uri = Uri.parse('$apiUrl${existing['id']}');
+                  final response = await http.put(
+                    uri,
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(payload),
+                  );
+                  if (response.statusCode == 200) {
+                    _showSnackBar('تم التحديث بنجاح', color: Colors.green);
+                  } else {
+                    _showSnackBar('فشل التحديث: ${response.body}', color: Colors.red);
+                  }
+                }
+                Navigator.pop(context);
+                await _fetchAllExpenses();
+              } catch (e) {
+                _showSnackBar('خطأ في الاتصال: $e', color: Colors.red);
+              }
+            },
+            child: Text(existing == null ? '+ إضافة مصروف' : 'تحديث'),
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   Future<void> deleteExpense(int id) async {
     final confirmed = await showDialog<bool>(
@@ -403,7 +415,10 @@ class _SewingExpensesSectionState extends State<SewingExpensesSection> {
               ),
               const SizedBox(height: 24),
               // Statistics Cards
+              if (widget.role == 'Admin' || widget.role == 'SuperAdmin') ...[
+
               Row(
+                
                 children: typeLabels.entries.map((entry) {
                   return Expanded(
                     child: Card(
@@ -434,7 +449,7 @@ class _SewingExpensesSectionState extends State<SewingExpensesSection> {
                     ),
                   );
                 }).toList(),
-              ),
+              ),],
               const SizedBox(height: 24),
               // Expenses Table
               Expanded(

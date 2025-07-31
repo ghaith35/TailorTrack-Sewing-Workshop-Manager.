@@ -10,10 +10,10 @@ import 'season_report_section.dart';
 import 'clients_section.dart';
 import 'purchases_section.dart';
 import 'sewing_returns_section.dart';
-// import 'machines_section.dart'; // ← new
 
 class SewingDashboard extends StatefulWidget {
-  const SewingDashboard({super.key});
+  final String role;
+  const SewingDashboard({Key? key, required this.role}) : super(key: key);
 
   @override
   State<SewingDashboard> createState() => _SewingDashboardState();
@@ -22,24 +22,37 @@ class SewingDashboard extends StatefulWidget {
 class _SewingDashboardState extends State<SewingDashboard> {
   int selectedSubSection = 0;
 
-  final subsections = [
-    {'icon': Icons.store,                'label': 'المستودع'},
-    {'icon': Icons.checkroom,            'label': 'الموديلات'},
-    {'icon': Icons.engineering,          'label': 'العمال'},
-    {'icon': Icons.receipt_long,         'label': 'المبيعات'},
-    {'icon': Icons.people,               'label': 'العملاء'},
-    {'icon': Icons.shopping_cart,        'label': 'المشتريات'},
-    {'icon': Icons.bar_chart,            'label': 'تقرير الموسم'},
-    {'icon': Icons.attach_money,         'label': 'المصاريف'},
-    {'icon': Icons.money_off,            'label': 'الديون'},
-    {'icon': Icons.local_shipping,       'label': 'الموردين'},
-    {'icon': Icons.keyboard_return,       'label': 'مرتجع بضاعه',},
+  List<Map<String, dynamic>> getAvailableSubsections() {
+    // full list in desired order:
+    const all = [
+      {'icon': Icons.store,          'label': 'المستودع'},
+      {'icon': Icons.checkroom,      'label': 'الموديلات'},
+      {'icon': Icons.engineering,    'label': 'العمال'},
+      {'icon': Icons.receipt_long,   'label': 'المبيعات'},
+      {'icon': Icons.people,         'label': 'العملاء'},
+      {'icon': Icons.shopping_cart,  'label': 'المشتريات'},
+      {'icon': Icons.attach_money,   'label': 'المصاريف'},
+      {'icon': Icons.bar_chart,      'label': 'تقرير الموسم'},
+      {'icon': Icons.money_off,      'label': 'الديون'},
+      {'icon': Icons.local_shipping, 'label': 'الموردين'},
+      {'icon': Icons.keyboard_return,'label': 'مرتجع بضاعه'},
+    ];
+    final isAdmin = widget.role == 'Admin' || widget.role == 'SuperAdmin';
 
-    // {'icon': Icons.precision_manufacturing, 'label': 'المكينات'}, // ← new
-  ];
+    // filter out sales, expenses & season-report for non-admins
+    return all.where((tab) {
+      final l = tab['label'] as String;
+      if (!isAdmin && (l == 'المبيعات' || l == 'المصاريف' || l == 'تقرير الموسم')) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final tabs = getAvailableSubsections();
+
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -47,29 +60,33 @@ class _SewingDashboardState extends State<SewingDashboard> {
           tooltip: 'الصفحة الرئيسية',
           onPressed: () => Navigator.pop(context),
         ),
-        backgroundColor: Theme.of(context).colorScheme.primary.withOpacity(0.1),
-        title: const Text('الخياطة', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor:
+            Theme.of(context).colorScheme.primary.withOpacity(0.1),
+        title: const Text(
+          'الخياطة',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
       ),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           children: [
-            // ─── Tabs Row ──────────────────────────────────────────────────────────
+            // ─── Tabs Row ─────────────────────────────
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 24.0),
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
-                  children: List.generate(
-                    subsections.length,
-                    (i) => Padding(
+                  children: List.generate(tabs.length, (i) {
+                    final tab = tabs[i];
+                    return Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 8.0),
                       child: ChoiceChip(
                         label: Row(
                           children: [
-                            Icon(subsections[i]['icon'] as IconData, size: 20),
+                            Icon(tab['icon'] as IconData, size: 20),
                             const SizedBox(width: 6),
-                            Text(subsections[i]['label'] as String),
+                            Text(tab['label'] as String),
                           ],
                         ),
                         selected: selectedSubSection == i,
@@ -81,22 +98,24 @@ class _SewingDashboardState extends State<SewingDashboard> {
                               : Theme.of(context).colorScheme.onSurface,
                           fontWeight: FontWeight.bold,
                         ),
-                        onSelected: (_) => setState(() => selectedSubSection = i),
+                        onSelected: (_) =>
+                            setState(() => selectedSubSection = i),
                       ),
-                    ),
-                  ),
+                    );
+                  }),
                 ),
               ),
             ),
 
-            // ─── Content Card ──────────────────────────────────────────────────────
+            // ─── Content Card ─────────────────────────
             Expanded(
               child: Card(
                 elevation: 4,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18)),
                 child: Padding(
                   padding: const EdgeInsets.all(24.0),
-                  child: _buildSectionContent(),
+                  child: _buildSectionContent(tabs),
                 ),
               ),
             ),
@@ -106,22 +125,52 @@ class _SewingDashboardState extends State<SewingDashboard> {
     );
   }
 
-  Widget _buildSectionContent() {
-    switch (selectedSubSection) {
-      case 0:  return const SewingWarehouseSection();
-      case 1:  return const SewingModelsSection();
-      case 2:  return const SewingEmployeesSection();
-      case 3:  return const SewingSalesSection();
-      case 4:  return const SewingClientsSection();
-      case 5:  return const SewingPurchasesSection();
-      case 6:  return const SeasonReportSection();
-      case 7:  return const SewingExpensesSection();
-      case 8:  return const DebtsSection();
-      case 9:  return const SewingSuppliersSection();
-      case 10: return const SewingReturnsSection();
+  Widget _buildSectionContent(List<Map<String, dynamic>> tabs) {
+    final role = widget.role;
+    final label = tabs[selectedSubSection]['label'] as String;
 
-      // case 10: return const MachinesSection();  // ← new
-      default: return const SizedBox();
+    switch (label) {
+      case 'المستودع':
+        return const SewingWarehouseSection();
+      case 'الموديلات':
+        return SewingModelsSection(userRole: role);
+      case 'العمال':
+        return const SewingEmployeesSection();
+      case 'المبيعات':
+        // only admins ever see this tab, but just in case:
+        return role == 'Admin' || role == 'SuperAdmin'
+            ? SewingSalesSection(role: role)
+            : _notAllowed();
+      case 'العملاء':
+        return const SewingClientsSection();
+      case 'المشتريات':
+        return const SewingPurchasesSection();
+      case 'المصاريف':
+        return role == 'Admin' || role == 'SuperAdmin'
+            ? SewingExpensesSection(role: role)
+            : _notAllowed();
+      case 'تقرير الموسم':
+        return role == 'Admin' || role == 'SuperAdmin'
+            ? const SeasonReportSection()
+            : _notAllowed();
+      case 'الديون':
+        // we now pass role in so DebtsSection can conditionally hide UI internally
+        return DebtsSection(role: role);
+      case 'الموردين':
+        return const SewingSuppliersSection();
+      case 'مرتجع بضاعه':
+        return const SewingReturnsSection();
+      default:
+        return const SizedBox();
     }
+  }
+
+  Widget _notAllowed() {
+    return const Center(
+      child: Text(
+        'غير مصرح لك برؤية هذه الصفحة',
+        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+      ),
+    );
   }
 }

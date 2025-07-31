@@ -15,7 +15,8 @@ Router getPurchasesRoutes(PostgreSQLConnection db) {
         p.supplier_id,
         s.full_name AS supplier_name,
         p.amount_paid_on_creation,
-        COALESCE(items.total, 0)        AS total,
+        p.driver, -- Include driver in the selection
+        COALESCE(items.total, 0) AS total,
         COALESCE(payments.extra_paid, 0) AS extra_paid
       FROM sewing.purchases p
       LEFT JOIN sewing.suppliers s ON s.id = p.supplier_id
@@ -34,8 +35,8 @@ Router getPurchasesRoutes(PostgreSQLConnection db) {
 
     final List<Map<String, dynamic>> result = [];
     for (final pr in rows) {
-      final p        = pr['purchases']!;  // real columns
-      final defaults = pr['']!;           // computed cols
+      final p        = pr['purchases']!;
+      final defaults = pr['']!;
 
       final total            = double.tryParse(defaults['total']?.toString() ?? '0') ?? 0.0;
       final extraPaid        = double.tryParse(defaults['extra_paid']?.toString() ?? '0') ?? 0.0;
@@ -57,6 +58,7 @@ Router getPurchasesRoutes(PostgreSQLConnection db) {
         'purchase_date':            p['purchase_date']?.toString(),
         'supplier_id':              p['supplier_id'],
         'supplier_name':            pr['suppliers']!['supplier_name'],
+        'driver':                   p['driver'], // Include driver in the result
         'amount_paid_on_creation':  paidOnCreation,
         'extra_paid':               extraPaid,
         'total_paid':               totalPaid,
@@ -76,22 +78,26 @@ Router getPurchasesRoutes(PostgreSQLConnection db) {
         headers: {'Content-Type': 'application/json'});
   });
 
+  // ─── Create a 
+
   // ─── Create a new purchase ────────────────────────────────────────────
   router.post('/', (Request req) async {
     final data      = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
     final items     = data['items'] as List? ?? [];
     final supplier  = data['supplier_id'] as int?;
     final paid0     = double.tryParse(data['amount_paid_on_creation']?.toString() ?? '0') ?? 0.0;
+    final driver     = data['driver'] as String? ?? 'غير محدد'; // Get the driver
 
     final res = await db.query(r'''
       INSERT INTO sewing.purchases 
-        (purchase_date, supplier_id, amount_paid_on_creation)
-      VALUES (COALESCE(@date, CURRENT_DATE), @supplier, @paid)
+        (purchase_date, supplier_id, amount_paid_on_creation, driver)
+      VALUES (COALESCE(@date, CURRENT_DATE), @supplier, @paid, @driver)
       RETURNING id
     ''', substitutionValues: {
       'date':     data['purchase_date'],
       'supplier': supplier,
       'paid':     paid0,
+      'driver':   driver, // Include driver in the query
     });
     final purchaseId = res.first[0] as int;
 
@@ -315,18 +321,21 @@ Router getPurchasesRoutes(PostgreSQLConnection db) {
     final data      = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
     final supplier  = data['supplier_id'] as int?;
     final paid0     = double.tryParse(data['amount_paid_on_creation']?.toString() ?? '0') ?? 0.0;
+    final driver     = data['driver'] as String? ?? 'غير محدد'; // Get the driver
 
     await db.query(r'''
       UPDATE sewing.purchases
          SET purchase_date = @date,
              supplier_id   = @supplier,
-             amount_paid_on_creation = @paid
+             amount_paid_on_creation = @paid,
+             driver = @driver // Update the driver
        WHERE id = @id
     ''', substitutionValues: {
       'id'      : int.parse(id),
       'date'    : data['purchase_date'],
       'supplier': supplier,
       'paid'    : paid0,
+      'driver':  driver, // Include driver in the query
     });
 
     return Response.ok(jsonEncode({'status': 'updated'}),

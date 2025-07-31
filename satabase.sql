@@ -351,3 +351,107 @@ CREATE INDEX idx_returns_return_date ON sewing.returns(return_date);
 ALTER TABLE sewing.product_inventory 
 ALTER COLUMN color DROP NOT NULL,
 ALTER COLUMN size DROP NOT NULL;
+
+
+CREATE TABLE sewing.client_credit_payments (
+  id SERIAL PRIMARY KEY,
+  client_id INTEGER REFERENCES sewing.clients(id),
+  amount DOUBLE PRECISION NOT NULL CHECK (amount > 0),
+  payment_date DATE DEFAULT CURRENT_DATE,
+  notes TEXT
+);
+ALTER TABLE sewing.facture_payments
+ADD COLUMN payment_method TEXT DEFAULT 'cash';
+ALTER TABLE sewing.returns
+ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'validated', 'cancelled'));
+ALTER TABLE sewing.purchases
+ADD COLUMN driver VARCHAR(100) NOT NULL DEFAULT 'غير محدد';
+
+
+-- SuperAdmin account
+INSERT INTO public.users (username, password_hash, role)
+VALUES (
+  'ghaith',
+  '$2a$12$wwH7O16u1WNuG/V4WUX7WOqQB294Ega88XMmHr.149vtTOKaqEVT6',  -- your bcrypt for MySuperPwd!
+  'SuperAdmin'
+);
+
+-- Admin account
+INSERT INTO public.users (username, password_hash, role)
+VALUES (
+  'osama',
+  '$2a$12$t.IN1QJ4NB3.rtNYMQjqwedLY0pG54DZa00.Lg3lOjkIhicAWsGgi',  -- your bcrypt for Admin@123
+  'Admin'
+);
+INSERT INTO users (username, password_hash, role) VALUES
+('nourdine', '$2a$12$/Wjqxs/LWyjAD1Q1KymgP.otJ6U/G8ZHC3yxFf8jH/tGuPqnxoTP6', 'Manager'),
+('comptable', '$2a$12$NLh/ZpbTeBXWkjQbxBHo5OHLsvyBxL.uof6fFHjFIjzqOuYFK5x1C', 'Accountant');
+
+
+
+
+SET search_path TO sewing;
+
+-- Truncate all tables except for the warehouses table
+TRUNCATE TABLE
+  clients,
+  suppliers,
+  models,
+  model_colors,
+  product_inventory,
+  material_types,
+  material_specs,
+  materials,
+  material_spec_values,
+  raw_inventory,
+  model_components,
+  model_production,
+  production_batches,
+  purchases,
+  purchase_items,
+  employees,
+  employee_attendance,
+  employee_loans,
+  employee_loan_installments,
+  piece_records,
+  factures,
+  facture_items,
+  facture_payments,
+  seasons,
+  season_reports,
+  expenses,
+  returns,
+  employee_debts,
+  client_credit_payments
+CASCADE;
+
+-- Reset the IDs for the truncated tables to start from 1
+ALTER SEQUENCE clients_id_seq RESTART WITH 1;
+ALTER SEQUENCE suppliers_id_seq RESTART WITH 1;
+ALTER SEQUENCE models_id_seq RESTART WITH 1;
+ALTER SEQUENCE model_colors_id_seq RESTART WITH 1;
+ALTER SEQUENCE product_inventory_id_seq RESTART WITH 1;
+ALTER SEQUENCE material_types_id_seq RESTART WITH 1;
+ALTER SEQUENCE material_specs_id_seq RESTART WITH 1;
+ALTER SEQUENCE materials_id_seq RESTART WITH 1;
+ALTER SEQUENCE material_spec_values_id_seq RESTART WITH 1;
+ALTER SEQUENCE raw_inventory_id_seq RESTART WITH 1;
+ALTER SEQUENCE model_components_id_seq RESTART WITH 1;
+ALTER SEQUENCE model_production_id_seq RESTART WITH 1;
+ALTER SEQUENCE production_batches_id_seq RESTART WITH 1;
+ALTER SEQUENCE purchases_id_seq RESTART WITH 1;
+ALTER SEQUENCE purchase_items_id_seq RESTART WITH 1;
+ALTER SEQUENCE employees_id_seq RESTART WITH 1;
+ALTER SEQUENCE employee_attendance_id_seq RESTART WITH 1;
+ALTER SEQUENCE employee_loans_id_seq RESTART WITH 1;
+ALTER SEQUENCE employee_loan_installments_id_seq RESTART WITH 1;
+ALTER SEQUENCE piece_records_id_seq RESTART WITH 1;
+ALTER SEQUENCE factures_id_seq RESTART WITH 1;
+ALTER SEQUENCE facture_items_id_seq RESTART WITH 1;
+ALTER SEQUENCE facture_payments_id_seq RESTART WITH 1;
+ALTER SEQUENCE seasons_id_seq RESTART WITH 1;
+ALTER SEQUENCE season_reports_id_seq RESTART WITH 1;
+ALTER SEQUENCE expenses_id_seq RESTART WITH 1;
+ALTER SEQUENCE returns_id_seq RESTART WITH 1;
+ALTER SEQUENCE employee_debts_id_seq RESTART WITH 1;
+ALTER SEQUENCE client_credit_payments_id_seq RESTART WITH 1;

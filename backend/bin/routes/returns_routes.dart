@@ -52,12 +52,12 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
         'quantity': parseInt(row[3]),
         'return_date': row[4].toString(),
         'is_ready_to_sell': row[5] as bool,
-'repair_materials': row[6] ?? [],
+        'repair_materials': row[6] ?? [],
         'repair_cost': parseNum(row[7]),
-        'notes': row[8],
+        'notes': row[8] ?? '',
         'created_at': row[9].toString(),
-        'client_name': row[10],
-        'model_name': row[11],
+        'client_name': row[10] ?? '',
+        'model_name': row[11] ?? '',
       }).toList();
 
       return Response.ok(
@@ -65,6 +65,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e) {
+      print('Error fetching returns: $e');
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to fetch returns: $e'}),
         headers: {'Content-Type': 'application/json'},
@@ -72,172 +73,364 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
     }
   });
 
+  // GET /returns/<id> - Get facture details with available quantities
+  router.get('/<id>', (Request request, String id) async {
+    try {
+      final factureId = int.parse(id);
+      print('Fetching facture $factureId');
 
-  // POST /returns - Create new return
-  // POST /returns - Create new return
-router.post('/', (Request request) async {
-  try {
-    final body = jsonDecode(await request.readAsString());
-    
-    final factureId = parseInt(body['facture_id']);
-    final modelId = parseInt(body['model_id']);
-    final quantity = parseInt(body['quantity']);
-    final isReadyToSell = body['is_ready_to_sell'] as bool;
-    final repairMaterials = body['repair_materials'] as List? ?? [];
-    final repairCost = parseNum(body['repair_cost']);
-    final notes = body['notes'] as String? ?? '';
+      final factureResults = await db.query('''
+        SELECT 
+          f.id,
+          f.client_id,
+          f.facture_date,
+          c.full_name AS client_name
+        FROM sewing.factures f
+        LEFT JOIN sewing.clients c ON f.client_id = c.id
+        WHERE f.id = @facture_id
+      ''', substitutionValues: {'facture_id': factureId});
 
-    return await db.transaction((txn) async {
-      // Get the original color from facture items
-      final factureItemResults = await txn.query('''
-        SELECT color FROM sewing.facture_items 
-        WHERE facture_id = @facture_id AND model_id = @model_id 
-        LIMIT 1
-      ''', substitutionValues: {
-        'facture_id': factureId,
-        'model_id': modelId,
-      });
-
-      final color = factureItemResults.isNotEmpty 
-          ? (factureItemResults.first[0] ?? '') 
-          : '';
-
-      // 1. Insert return record
-      final returnResults = await txn.query('''
-        INSERT INTO sewing.returns (
-          facture_id, model_id, quantity, is_ready_to_sell, 
-          repair_materials, repair_cost, notes
-        ) VALUES (
-          @facture_id, @model_id, @quantity, @is_ready_to_sell,
-          @repair_materials, @repair_cost, @notes
-        ) RETURNING id
-      ''', substitutionValues: {
-        'facture_id': factureId,
-        'model_id': modelId,
-        'quantity': quantity,
-        'is_ready_to_sell': isReadyToSell,
-        'repair_materials': jsonEncode(repairMaterials),
-        'repair_cost': repairCost,
-        'notes': notes,
-      });
-
-      final returnId = parseInt(returnResults.first[0]);
-
-      // Get warehouse_id for 'ready' warehouse
-      final warehouseResults = await txn.query('''
-        SELECT id FROM sewing.warehouses WHERE type = 'ready' LIMIT 1
-      ''');
-      if (warehouseResults.isEmpty) {
-        throw Exception('No ready warehouse found');
-      }
-      final warehouseId = parseInt(warehouseResults.first[0]);
-
-      // Handle inventory update (for both ready-to-sell and after-repair cases)
-      // Check for existing inventory row
-      final existingInventoryResults = await txn.query('''
-        SELECT id, quantity FROM sewing.product_inventory
-        WHERE warehouse_id = @warehouse_id
-          AND model_id = @model_id
-          AND color = @color
-          AND size = @size
-          AND production_batch_id IS NULL
-        LIMIT 1
-      ''', substitutionValues: {
-        'warehouse_id': warehouseId,
-        'model_id': modelId,
-        'color': color,
-        'size': '', // Default empty size since facture_items doesn’t provide size
-      });
-
-      if (!isReadyToSell) {
-        // Process repair materials
-        for (final material in repairMaterials) {
-          final materialId = parseInt(material['material_id']);
-          final materialQuantity = parseNum(material['quantity']);
-
-          final stockResults = await txn.query('''
-            SELECT stock_quantity FROM sewing.materials WHERE id = @material_id
-          ''', substitutionValues: {'material_id': materialId});
-
-          if (stockResults.isEmpty) {
-            throw Exception('Material not found: $materialId');
-          }
-
-          final availableStock = parseNum(stockResults.first[0]);
-          if (availableStock < materialQuantity) {
-            throw Exception('Insufficient stock for material $materialId. Available: $availableStock, Required: $materialQuantity');
-          }
-
-          await txn.query('''
-            UPDATE sewing.materials 
-            SET stock_quantity = stock_quantity - @quantity
-            WHERE id = @material_id
-          ''', substitutionValues: {
-            'material_id': materialId,
-            'quantity': materialQuantity,
-          });
-        }
-
-        // Add repair expense
-        if (repairCost > 0) {
-          await txn.query('''
-            INSERT INTO sewing.expenses (
-              expense_type, description, amount, expense_date
-            ) VALUES (
-              'custom', 'تكلفة إصلاح مرتجع رقم ' || @return_id, @amount, CURRENT_DATE
-            )
-          ''', substitutionValues: {
-            'return_id': returnId,
-            'amount': repairCost,
-          });
-        }
+      if (factureResults.isEmpty) {
+        print('Facture $factureId not found');
+        return Response.notFound(
+          jsonEncode({'error': 'Facture not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
       }
 
-      // Update or insert inventory
-      if (existingInventoryResults.isNotEmpty) {
-        final existingId = parseInt(existingInventoryResults.first[0]);
-        await txn.query('''
-          UPDATE sewing.product_inventory
-          SET quantity = quantity + @quantity,
-              last_updated = CURRENT_TIMESTAMP
-          WHERE id = @id
-        ''', substitutionValues: {
-          'quantity': quantity,
-          'id': existingId,
-        });
-      } else {
-        await txn.query('''
-          INSERT INTO sewing.product_inventory (
-            warehouse_id, model_id, color, size, quantity, last_updated, production_batch_id
-          ) VALUES (
-            @warehouse_id, @model_id, @color, @size, @quantity, CURRENT_TIMESTAMP, NULL
-          )
-        ''', substitutionValues: {
-          'warehouse_id': warehouseId,
-          'model_id': modelId,
-          'color': color,
-          'size': '', // Default empty size
-          'quantity': quantity,
-        });
-      }
+      final itemResults = await db.query('''
+        SELECT 
+          fi.id,
+          fi.facture_id,
+          fi.model_id,
+          fi.color,
+          fi.quantity,
+          fi.unit_price,
+          m.name AS model_name,
+          fi.quantity - COALESCE(SUM(r.quantity), 0) AS available_quantity
+        FROM sewing.facture_items fi
+        JOIN sewing.models m ON fi.model_id = m.id
+        LEFT JOIN sewing.returns r ON r.facture_id = fi.facture_id AND r.model_id = fi.model_id
+        WHERE fi.facture_id = @facture_id
+        GROUP BY fi.id, m.name
+      ''', substitutionValues: {'facture_id': factureId});
 
-      return Response(201,
-        body: jsonEncode({
-          'id': returnId,
-          'message': 'Return processed successfully',
-          'is_ready_to_sell': isReadyToSell,
-          'repair_cost': repairCost,
-        }),
+      print('Facture items for $factureId: ${itemResults.length} items');
+
+      final facture = {
+        'id': parseInt(factureResults.first[0]),
+        'client_id': parseInt(factureResults.first[1]),
+        'facture_date': factureResults.first[2]?.toString() ?? '',
+        'client_name': factureResults.first[3] ?? '',
+        'items': itemResults.map((row) => {
+          'id': parseInt(row[0]),
+          'facture_id': parseInt(row[1]),
+          'model_id': parseInt(row[2]),
+          'color': row[3] ?? '',
+          'quantity': parseInt(row[4]),
+          'unit_price': parseNum(row[5]),
+          'model_name': row[6] ?? '',
+          'available_quantity': parseInt(row[7]),
+        }).toList(),
+      };
+
+      return Response.ok(
+        jsonEncode(facture),
         headers: {'Content-Type': 'application/json'},
       );
-    });
-  } catch (e) {
-    return Response.internalServerError(
-      body: jsonEncode({'error': 'Failed to create return: $e'}),
-      headers: {'Content-Type': 'application/json'},
-    );
-  }
-});
+    } catch (e, stackTrace) {
+      print('Error fetching facture $id: $e\n$stackTrace');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to fetch facture: $e'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  });
+
+  // POST /returns - Create new return
+  router.post('/', (Request request) async {
+    try {
+      final bodyString = await request.readAsString();
+      print('Creating return with payload: $bodyString');
+      final body = jsonDecode(bodyString);
+      
+      final factureId = parseInt(body['facture_id']);
+      final modelId = parseInt(body['model_id']);
+      final returnQuantity = parseInt(body['quantity']);
+      final isReadyToSell = body['is_ready_to_sell'] as bool? ?? false;
+      final repairMaterials = body['repair_materials'] as List? ?? [];
+      final repairCost = parseNum(body['repair_cost']);
+      final notes = body['notes'] as String? ?? '';
+      final returnDate = body['return_date'] != null
+          ? DateTime.parse(body['return_date'])
+          : DateTime.now();
+
+      print('Parsed: factureId=$factureId, modelId=$modelId, quantity=$returnQuantity, repairMaterials=$repairMaterials, repairCost=$repairCost');
+
+      return await db.transaction((txn) async {
+        if (factureId <= 0 || modelId <= 0 || returnQuantity <= 0) {
+          return Response(400, body: jsonEncode({'error': 'Invalid facture_id, model_id, or quantity'}), headers: {'Content-Type': 'application/json'});
+        }
+
+        final factureItemResults = await txn.query('''
+          SELECT id, quantity
+          FROM sewing.facture_items 
+          WHERE facture_id = @facture_id AND model_id = @model_id 
+          LIMIT 1
+        ''', substitutionValues: {'facture_id': factureId, 'model_id': modelId});
+
+        if (factureItemResults.isEmpty) {
+          return Response.notFound(jsonEncode({'error': 'Facture item not found'}), headers: {'Content-Type': 'application/json'});
+        }
+
+        final originalQuantity = parseInt(factureItemResults.first[1]);
+        final existingReturns = await txn.query('''
+          SELECT COALESCE(SUM(quantity), 0)
+          FROM sewing.returns
+          WHERE facture_id = @facture_id AND model_id = @model_id
+        ''', substitutionValues: {'facture_id': factureId, 'model_id': modelId});
+        final totalReturned = parseInt(existingReturns.first[0]);
+
+        if (totalReturned + returnQuantity > originalQuantity) {
+          return Response(400, body: jsonEncode({
+            'error': 'الكمية المرتجعة تتجاوز الكمية المتاحة (${originalQuantity - totalReturned})',
+          }), headers: {'Content-Type': 'application/json'});
+        }
+
+        final returnResults = await txn.query('''
+          INSERT INTO sewing.returns (
+            facture_id, model_id, quantity, return_date, is_ready_to_sell, 
+            repair_materials, repair_cost, notes, created_at, status
+          ) VALUES (
+            @facture_id, @model_id, @quantity, @return_date, @is_ready_to_sell,
+            @repair_materials, @repair_cost, @notes, CURRENT_TIMESTAMP, 'pending'
+          ) RETURNING id
+        ''', substitutionValues: {
+          'facture_id': factureId,
+          'model_id': modelId,
+          'quantity': returnQuantity,
+          'return_date': returnDate,
+          'is_ready_to_sell': isReadyToSell,
+          'repair_materials': jsonEncode(repairMaterials),
+          'repair_cost': repairCost,
+          'notes': notes,
+        });
+
+        final returnId = parseInt(returnResults.first[0]);
+        print('Return created: id=$returnId');
+
+        return Response(201, body: jsonEncode({
+          'id': returnId,
+          'message': 'Return created successfully',
+          'is_ready_to_sell': isReadyToSell,
+          'repair_cost': repairCost,
+        }), headers: {'Content-Type': 'application/json'});
+      });
+    } catch (e) {
+      print('Error creating return: $e');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to create return: $e'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  });
+
+  // PATCH /returns/<id>/validate - Validate return to make it ready to sell
+  router.patch('/<id>/validate', (Request request, String id) async {
+    try {
+      final bodyString = await request.readAsString();
+      print('Validating return $id with payload: $bodyString');
+
+      Map<String, dynamic> body;
+      try {
+        body = bodyString.isNotEmpty ? jsonDecode(bodyString) : {};
+      } catch (e) {
+        print('Invalid JSON payload: $e');
+        return Response(400, body: jsonEncode({'error': 'Invalid JSON payload'}), headers: {'Content-Type': 'application/json'});
+      }
+
+      final returnId = int.parse(id);
+      final repairCost = parseNum(body['repair_cost'] ?? 0.0);
+      final repairMaterials = (body['repair_materials'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+      final isReadyToSell = body['is_ready_to_sell'] as bool? ?? true;
+
+      print('Parsed: returnId=$returnId, repairCost=$repairCost, repairMaterials=$repairMaterials, isReadyToSell=$isReadyToSell');
+
+      return await db.transaction((txn) async {
+        final returnExists = await txn.query('''
+          SELECT id, model_id, quantity, facture_id
+          FROM sewing.returns 
+          WHERE id = @id
+        ''', substitutionValues: {'id': returnId});
+
+        if (returnExists.isEmpty) {
+          print('Return $returnId not found');
+          return Response.notFound(jsonEncode({'error': 'Return not found'}), headers: {'Content-Type': 'application/json'});
+        }
+
+        final modelId = parseInt(returnExists.first[1]);
+        final quantity = parseInt(returnExists.first[2]);
+        final factureId = parseInt(returnExists.first[3]);
+
+        print('Return details: modelId=$modelId, quantity=$quantity, factureId=$factureId');
+
+        // Update returns table
+        final updateReturnResult = await txn.query('''
+          UPDATE sewing.returns 
+          SET is_ready_to_sell = @is_ready_to_sell,
+              repair_materials = @repair_materials,
+              repair_cost = @repair_cost,
+              status = 'validated'
+          WHERE id = @id
+          RETURNING id
+        ''', substitutionValues: {
+          'id': returnId,
+          'is_ready_to_sell': isReadyToSell,
+          'repair_cost': repairCost,
+          'repair_materials': jsonEncode(repairMaterials),
+        });
+
+        print('Return $returnId updated: ${updateReturnResult.isNotEmpty}');
+
+        // Insert repair_cost into expenses table if > 0
+        if (repairCost > 0) {
+          final expenseResult = await txn.query('''
+            INSERT INTO sewing.expenses (
+              expense_type, description, amount, expense_date, created_at
+            ) VALUES (
+              @expense_type, @description, @amount, CURRENT_DATE, CURRENT_TIMESTAMP
+            ) RETURNING id
+          ''', substitutionValues: {
+            'expense_type': 'custom',
+            'description': 'تكلفة إصلاح الإرجاع رقم $returnId',
+            'amount': repairCost,
+          });
+          print('Expense inserted for return $returnId: id=${expenseResult.isNotEmpty ? expenseResult.first[0] : 'none'}');
+        } else {
+          print('No expense inserted: repairCost=$repairCost');
+        }
+
+        // Deduct repair materials from materials.stock_quantity
+        final materialErrors = <String>[];
+        if (repairMaterials.isNotEmpty && quantity > 0) {
+          for (var material in repairMaterials) {
+            final materialId = parseInt(material['material_id']);
+            final materialQuantityPerUnit = parseNum(material['quantity']);
+            final totalDeductionQuantity = quantity * materialQuantityPerUnit;
+
+            print('Processing material: materialId=$materialId, materialQuantityPerUnit=$materialQuantityPerUnit, totalDeductionQuantity=$totalDeductionQuantity');
+
+            if (materialId <= 0 || materialQuantityPerUnit <= 0) {
+              materialErrors.add('Invalid material_id ($materialId) or quantity ($materialQuantityPerUnit)');
+              continue;
+            }
+
+            final materialResults = await txn.query('''
+              SELECT stock_quantity FROM sewing.materials
+              WHERE id = @material_id
+            ''', substitutionValues: {'material_id': materialId});
+
+            if (materialResults.isEmpty) {
+              materialErrors.add('Material ID $materialId not found');
+              continue;
+            }
+
+            final currentStock = parseNum(materialResults.first[0]);
+            if (currentStock < totalDeductionQuantity) {
+              materialErrors.add('Insufficient stock for material ID $materialId: available=$currentStock, required=$totalDeductionQuantity');
+              continue;
+            }
+
+            final updateMaterialResult = await txn.query('''
+              UPDATE sewing.materials
+              SET stock_quantity = stock_quantity - @quantity
+              WHERE id = @material_id
+              RETURNING id
+            ''', substitutionValues: {
+              'material_id': materialId,
+              'quantity': totalDeductionQuantity,
+            });
+
+            print('Material $materialId updated: ${updateMaterialResult.isNotEmpty ? 'id=${updateMaterialResult.first[0]}' : 'none'}');
+          }
+        } else {
+          print('No materials to deduct: repairMaterials=$repairMaterials, quantity=$quantity');
+        }
+
+        // Add to warehouse if ready to sell
+        if (isReadyToSell) {
+          final warehouseResults = await txn.query('''
+            SELECT id FROM sewing.warehouses WHERE type = 'ready' LIMIT 1
+          ''');
+          if (warehouseResults.isEmpty) {
+            materialErrors.add('No ready warehouse found');
+          } else {
+            final warehouseId = parseInt(warehouseResults.first[0]);
+            print('Warehouse ID: $warehouseId');
+
+            final factureItemResults = await txn.query('''
+              SELECT color
+              FROM sewing.facture_items
+              WHERE facture_id = @facture_id AND model_id = @model_id
+              LIMIT 1
+            ''', substitutionValues: {
+              'facture_id': factureId,
+              'model_id': modelId,
+            });
+
+            if (factureItemResults.isEmpty) {
+              materialErrors.add('No facture item found for facture_id=$factureId, model_id=$modelId');
+            } else {
+              String? color = factureItemResults.first[0] as String?;
+              print('Color for inventory: $color');
+
+              final inventoryResult = await txn.query('''
+                INSERT INTO sewing.product_inventory (
+                  warehouse_id, model_id, quantity, last_updated, color
+                ) VALUES (
+                  @warehouse_id, @model_id, @quantity, CURRENT_TIMESTAMP, @color
+                ) ON CONFLICT (warehouse_id, model_id)
+                DO UPDATE SET
+                  quantity = sewing.product_inventory.quantity + EXCLUDED.quantity,
+                  last_updated = CURRENT_TIMESTAMP
+                RETURNING id
+              ''', substitutionValues: {
+                'warehouse_id': warehouseId,
+                'model_id': modelId,
+                'quantity': quantity,
+                'color': color ?? '',
+              });
+
+              print('Inventory updated: ${inventoryResult.isNotEmpty ? 'id=${inventoryResult.first[0]}' : 'none'}');
+            }
+          }
+        }
+
+        if (materialErrors.isNotEmpty) {
+          return Response(400, body: jsonEncode({
+            'error': 'Validation completed with issues',
+            'material_errors': materialErrors,
+          }), headers: {'Content-Type': 'application/json'});
+        }
+
+        return Response.ok(
+          jsonEncode({
+            'message': 'Return validated successfully',
+            'return_id': returnId,
+            'is_ready_to_sell': isReadyToSell,
+            'repair_cost': repairCost,
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      });
+    } catch (e, stackTrace) {
+      print('Error validating return $id: $e\n$stackTrace');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to validate return: $e'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  });
 
   // DELETE /returns/<id> - Delete return
   router.delete('/<id>', (Request request, String id) async {
@@ -247,10 +440,7 @@ router.post('/', (Request request) async {
       ''', substitutionValues: {'id': int.parse(id)});
 
       if (results.isEmpty) {
-        return Response.notFound(
-          jsonEncode({'error': 'Return not found'}),
-          headers: {'Content-Type': 'application/json'},
-        );
+        return Response.notFound(jsonEncode({'error': 'Return not found'}), headers: {'Content-Type': 'application/json'});
       }
 
       return Response.ok(
@@ -258,6 +448,7 @@ router.post('/', (Request request) async {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e) {
+      print('Error deleting return $id: $e');
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to delete return: $e'}),
         headers: {'Content-Type': 'application/json'},
@@ -291,14 +482,47 @@ router.post('/', (Request request) async {
         headers: {'Content-Type': 'application/json'},
       );
     } catch (e) {
+      print('Error fetching return stats: $e');
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to fetch return stats: $e'}),
         headers: {'Content-Type': 'application/json'},
       );
     }
   });
-router.all('/<ignored|.*>', (Request request) {
-  return Response.notFound(jsonEncode({'error': 'Route not found'}), headers: {'Content-Type': 'application/json'});
-});
+
+  // GET /materials - Fetch available materials
+  router.get('/materials', (Request request) async {
+    try {
+      final results = await db.query('''
+        SELECT id, code, stock_quantity 
+        FROM sewing.materials 
+        WHERE stock_quantity > 0
+      ''');
+      final materials = results.map((row) => {
+        'id': parseInt(row[0]),
+        'code': row[1] as String,
+        'stock_quantity': parseNum(row[2]),
+      }).toList();
+      print('Fetched materials: $materials');
+      return Response.ok(
+        jsonEncode(materials),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } catch (e) {
+      print('Error fetching materials: $e');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to fetch materials: $e'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  });
+
+  router.all('/<ignored|.*>', (Request request) {
+    return Response.notFound(
+      jsonEncode({'error': 'Route not found'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  });
+
   return router;
 }

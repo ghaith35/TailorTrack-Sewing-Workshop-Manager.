@@ -5,39 +5,41 @@ import 'package:file_picker/file_picker.dart';
 import 'dart:typed_data';
 
 class SewingModelsSection extends StatefulWidget {
-  const SewingModelsSection({super.key});
+  final String userRole;
+  const SewingModelsSection({super.key, required this.userRole});
 
   @override
   State<SewingModelsSection> createState() => _SewingModelsSectionState();
 }
 
 class _SewingModelsSectionState extends State<SewingModelsSection> {
-  int selectedTab = 0;
-  final tabs = ['أرشيف الموديلات', 'موديلات تحت الإنتاج'];
-  
-  // Division method state
-  int divisionMode = 0; // 0: month actual, 1: annual avg, 2: custom
-  int customPieces = 2000; // Default for custom
-  
-  // Archive models (all models)
+  String selectedTab = '';
+
+  int divisionMode = 0;
+  int customPieces = 2000;
+
   List<dynamic> archiveModels = [];
   List<dynamic> materialTypes = [];
   List<dynamic> materials = [];
   List<dynamic> availableMaterials = [];
-  List<dynamic> seasons = []; // Add seasons list
+  List<dynamic> seasons = [];
   int? selectedModelId;
-  int? selectedSeasonId; // null means "ALL"
+  int? selectedSeasonId;
   bool isLoading = false;
 
-  // Production models (batches currently in production)
   List<dynamic> inProductionBatches = [];
 
   final String baseUrl = 'http://localhost:8888';
 
+  List<String> get availableTabs {
+    return widget.userRole == "Accountant"
+        ? ['موديلات تحت الإنتاج']
+        : ['أرشيف الموديلات', 'موديلات تحت الإنتاج'];
+  }
+
   Map<String, dynamic>? get selectedModel {
     if (selectedModelId == null) return null;
     try {
-      // Search in archive models
       return archiveModels.firstWhere((m) => m['id'] == selectedModelId);
     } catch (e) {
       return null;
@@ -47,14 +49,28 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
   @override
   void initState() {
     super.initState();
+    selectedTab = availableTabs.first;
     fetchModels();
+    if (selectedTab == 'موديلات تحت الإنتاج') {
+      fetchInProductionBatches();
+    }
     fetchAvailableMaterials();
     fetchMaterialTypes();
-    fetchSeasonsIfAvailable(); // Add this
-    fetchInProductionBatches();
+    fetchSeasonsIfAvailable();
   }
 
-  // Add seasons fetch method
+  @override
+  void didUpdateWidget(SewingModelsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.userRole != oldWidget.userRole) {
+      setState(() {
+        if (!availableTabs.contains(selectedTab)) {
+          selectedTab = availableTabs.first;
+        }
+      });
+    }
+  }
+
   Future<void> fetchSeasonsIfAvailable() async {
     try {
       final res = await http.get(Uri.parse('$baseUrl/purchases/seasons'));
@@ -64,37 +80,112 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
         });
       }
     } catch (_) {
-      // If seasons endpoint doesn't exist, just continue without it
       seasons = [];
     }
   }
+// 1) Extract a generic “show snackbar” helper if you don’t have one already:
+void _showSnackBar(String msg, {Color color = Colors.black}) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text(msg), backgroundColor: color),
+  );
+}
+
+// 2) Delete a model from the archive with confirmation:
+Future<void> _deleteModel(Map<String, dynamic> model) async {
+  final confirm = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('تأكيد الحذف'),
+          content: Text('هل تريد حذف الموديل "${model['name']}"؟'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('حذف'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+  if (!confirm) return;
+
+  try {
+    final resp = await http.delete(
+      Uri.parse('$baseUrl/models/${model['id']}'),
+    );
+    if (resp.statusCode == 200) {
+      _showSnackBar('تم حذف الموديل', color: Colors.green);
+      await fetchModels();
+    } else {
+      throw 'فشل الحذف';
+    }
+  } catch (e) {
+    _showSnackBar(e.toString(), color: Colors.red);
+  }
+}
+
+// 3) Delete a production batch with confirmation:
+Future<void> _deleteProductionBatch(Map<String, dynamic> batch) async {
+  final name = '${batch['model_name']} - ${batch['color']} (${batch['size']})';
+  final confirm = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('تأكيد الحذف'),
+          content: Text('هل تريد حذف دفعة الإنتاج "$name"؟'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('حذف'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+  if (!confirm) return;
+
+  try {
+    final resp = await http.delete(
+      Uri.parse('$baseUrl/models/production-batch/${batch['id']}'),
+    );
+    if (resp.statusCode == 200) {
+      _showSnackBar('تم حذف دفعة الإنتاج', color: Colors.green);
+      await fetchInProductionBatches();
+    } else {
+      throw 'فشل الحذف';
+    }
+  } catch (e) {
+    _showSnackBar(e.toString(), color: Colors.red);
+  }
+}
 
   Future<void> fetchModels() async {
     setState(() => isLoading = true);
     try {
       String url = '$baseUrl/models/';
-      
-      // Use season filtering only if the endpoint exists and season is selected
       if (selectedSeasonId != null && seasons.isNotEmpty) {
         try {
           url = '$baseUrl/models/by_season/$selectedSeasonId';
           final testRes = await http.get(Uri.parse(url));
           if (testRes.statusCode != 200) {
-            // Fallback to main endpoint
             url = '$baseUrl/models/';
           }
         } catch (_) {
           url = '$baseUrl/models/';
         }
       }
-      
-      // Fetch all models for archive
       final archiveResponse = await http.get(Uri.parse(url));
       if (archiveResponse.statusCode == 200) {
         archiveModels = jsonDecode(archiveResponse.body);
       }
-
-      // Set initial selection for archive tab
       if (selectedModelId == null && archiveModels.isNotEmpty) {
         selectedModelId = archiveModels.first['id'];
         await fetchMaterials(selectedModelId!);
@@ -138,7 +229,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error fetching materials: $e')));
-    } 
+    }
   }
 
   Future<void> fetchMaterials(int modelId) async {
@@ -248,10 +339,9 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
     if (date.isEmpty) return '';
     try {
       final d = DateTime.parse(date);
-      // Adjust the format as you like, here: yyyy-MM-dd
       return "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
     } catch (_) {
-      return date.split('T').first; // fallback if parsing fails
+      return date.split('T').first;
     }
   }
 
@@ -261,13 +351,10 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
       url += '&division_pieces=$customPieces';
     }
     final res = await http.get(Uri.parse(url));
-
     if (res.statusCode == 200) {
       return jsonDecode(res.body) as Map<String, dynamic>;
     }
-    // Let FutureBuilder see the error – do NOT swallow it.
-    throw Exception(
-        'fetchModelCost ${res.statusCode}: ${res.reasonPhrase}\n${res.body}');
+    throw Exception('fetchModelCost ${res.statusCode}: ${res.reasonPhrase}\n${res.body}');
   }
 
   void showDivisionMethodDialog() {
@@ -319,7 +406,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
           ElevatedButton(
             child: const Text("تأكيد"),
             onPressed: () {
-              setState(() {}); // To update your UI and refetch cost
+              setState(() {});
               Navigator.pop(context);
             },
           ),
@@ -329,6 +416,8 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
   }
 
   Future<void> addOrEditModel({Map<String, dynamic>? initial}) async {
+    final _formKey = GlobalKey<FormState>();
+
     String? name = initial?['name'];
     DateTime startDate = initial?['start_date'] != null
         ? DateTime.parse(initial!['start_date'])
@@ -351,7 +440,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
         text: (initial?['nbr_of_sizes']?.toString() ??
             (initial?['sizes'] != null && (initial!['sizes'] as String).isNotEmpty
                 ? (initial!['sizes'] as String).split('-').length.toString()
-                : '')));
+                : '0')));
 
     List<Map<String, dynamic>> selectedMaterials = [];
     List<TextEditingController> materialQuantityControllers = [];
@@ -359,7 +448,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
     double totalCost = 0.0;
     double profit = 0.0;
 
-    // Load existing materials if editing
     if (initial != null) {
       try {
         final response = await http.get(Uri.parse('$baseUrl/models/${initial['id']}/materials'));
@@ -379,7 +467,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
               'total_cost': material['total_cost'] ?? 0.0,
             };
           }).toList();
-          // Initialize controllers with correct values
           materialQuantityControllers = selectedMaterials
               .map((mat) => TextEditingController(text: (mat['quantity_needed'] ?? '').toString()))
               .toList();
@@ -391,19 +478,15 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
 
     void calculateCosts() {
       totalMaterialCost = selectedMaterials.fold(0.0, (sum, material) => sum + (material['total_cost'] ?? 0.0));
-
       double laborCost = (double.tryParse(cutPriceCtrl.text) ?? 0.0) +
           (double.tryParse(sewingManualCtrl.text) ?? 0.0) +
           (double.tryParse(pressPriceCtrl.text) ?? 0.0);
-
       double additionalCost = (double.tryParse(washingCtrl.text) ?? 0.0) +
           (double.tryParse(embroideryCtrl.text) ?? 0.0) +
           (double.tryParse(laserCtrl.text) ?? 0.0) +
           (double.tryParse(printingCtrl.text) ?? 0.0) +
           (double.tryParse(crochetCtrl.text) ?? 0.0);
-
       totalCost = totalMaterialCost + laborCost + additionalCost;
-
       double sellingPrice = double.tryParse(sellingPriceCtrl.text) ?? 0.0;
       profit = sellingPrice - totalCost;
     }
@@ -414,7 +497,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
         builder: (context, setDialogState) {
           calculateCosts();
 
-          // Helper to add new material & controller together
           void addMaterial() {
             selectedMaterials.add({
               'material_id': null,
@@ -427,338 +509,427 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
             materialQuantityControllers.add(TextEditingController(text: '0'));
           }
 
-          // Helper to remove material & controller at index
           void removeMaterial(int index) {
             selectedMaterials.removeAt(index);
             materialQuantityControllers[index].dispose();
             materialQuantityControllers.removeAt(index);
           }
 
-          // Helper to update controller list when a new material is selected
           void selectMaterial(int index, int selectedMaterialId) {
             final selectedMat = availableMaterials.firstWhere((m) => m['id'] == selectedMaterialId);
             selectedMaterials[index]['material_id'] = selectedMaterialId;
             selectedMaterials[index]['material_code'] = selectedMat['code'];
             selectedMaterials[index]['material_name'] = selectedMat['name'];
-            selectedMaterials[index]['price'] = selectedMat['price'];
+            selectedMaterials[index]['price'] = selectedMat['price'] ?? 0.0;
             selectedMaterials[index]['quantity_needed'] = 1.0;
-            selectedMaterials[index]['total_cost'] = (selectedMaterials[index]['price'] as num) * 1.0;
+            selectedMaterials[index]['total_cost'] = (selectedMat['price'] ?? 0.0) * 1.0;
             materialQuantityControllers[index].text = '1';
           }
 
           return AlertDialog(
             title: Text(initial == null ? 'إضافة موديل جديد' : 'تعديل موديل'),
-            content: SizedBox(
-              width: 500,
-              height: 600,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Basic Information Card
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('المعلومات الأساسية', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                            SizedBox(height: 8),
-                            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'اسم الموديل')),
-                            SizedBox(height: 8),
-                            TextField(controller: imageCtrl, decoration: const InputDecoration(labelText: 'رابط الصورة')),
-                            SizedBox(height: 8),
-                            TextField(
-                              controller: sizesCtrl,
-                              decoration: const InputDecoration(labelText: 'المقاسات (مثال: S-M-L-XL)'),
-                              onChanged: (val) {
-                                nbrSizesCtrl.text = val.trim().isEmpty ? '0' : val.trim().split('-').length.toString();
-                              },
-                            ),
-                            SizedBox(height: 8),
-                            TextField(
-                              controller: nbrSizesCtrl,
-                              decoration: const InputDecoration(labelText: 'عدد المقاسات'),
-                              readOnly: true,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    SizedBox(height: 16),
-
-                    // Labor Costs Card
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('تكاليف العمالة', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                            SizedBox(height: 8),
-                            Row(
-                              children: [
-                                Expanded(child: TextField(
-                                  controller: cutPriceCtrl,
-                                  decoration: const InputDecoration(labelText: 'سعر القص'),
-                                  keyboardType: TextInputType.number,
-                                  onChanged: (_) => setDialogState(() {}),
-                                )),
-                                SizedBox(width: 8),
-                                Expanded(child: TextField(
-                                  controller: sewingManualCtrl,
-                                  decoration: const InputDecoration(labelText: 'سعر الخياطة يدوي'),
-                                  keyboardType: TextInputType.number,
-                                  onChanged: (_) => setDialogState(() {}),
-                                )),
-                              ],
-                            ),
-                            SizedBox(height: 8),
-                            Row(
-                              children: [
-                                Expanded(child: TextField(
-                                  controller: pressPriceCtrl,
-                                  decoration: const InputDecoration(labelText: 'سعر الكي'),
-                                  keyboardType: TextInputType.number,
-                                  onChanged: (_) => setDialogState(() {}),
-                                )),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    SizedBox(height: 16),
-
-                    // Additional Services Card
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('خدمات إضافية', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                            SizedBox(height: 8),
-                            Row(
-                              children: [
-                                Expanded(child: TextField(
-                                  controller: washingCtrl,
-                                  decoration: const InputDecoration(labelText: 'الغسيل'),
-                                  keyboardType: TextInputType.number,
-                                  onChanged: (_) => setDialogState(() {}),
-                                )),
-                                SizedBox(width: 8),
-                                Expanded(child: TextField(
-                                  controller: embroideryCtrl,
-                                  decoration: const InputDecoration(labelText: 'التطريز'),
-                                  keyboardType: TextInputType.number,
-                                  onChanged: (_) => setDialogState(() {}),
-                                )),
-                              ],
-                            ),
-                            SizedBox(height: 8),
-                            Row(
-                              children: [
-                                Expanded(child: TextField(
-                                  controller: laserCtrl,
-                                  decoration: const InputDecoration(labelText: 'ليزر'),
-                                  keyboardType: TextInputType.number,
-                                  onChanged: (_) => setDialogState(() {}),
-                                )),
-                                SizedBox(width: 8),
-                                Expanded(child: TextField(
-                                  controller: printingCtrl,
-                                  decoration: const InputDecoration(labelText: 'الطباعة'),
-                                  keyboardType: TextInputType.number,
-                                  onChanged: (_) => setDialogState(() {}),
-                                )),
-                              ],
-                            ),
-                            SizedBox(height: 8),
-                            TextField(
-                              controller: crochetCtrl,
-                              decoration: const InputDecoration(labelText: 'كروشيه'),
-                              keyboardType: TextInputType.number,
-                              onChanged: (_) => setDialogState(() {}),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-
-                    SizedBox(height: 16),
-
-                    // Materials Section Card
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text('المواد الخام', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                Text('التكلفة الإجمالية: ${totalMaterialCost.toStringAsFixed(2)}دج',
-                                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
-                              ],
-                            ),
-                            SizedBox(height: 8),
-                            // Selected Materials List
-                            ...selectedMaterials.asMap().entries.map((entry) {
-                              int index = entry.key;
-                              Map<String, dynamic> material = entry.value;
-
-                              // Get available material info from the main list
-                              var materialInfo = availableMaterials.firstWhere(
-                                (m) => m['id'] == material['material_id'],
-                                orElse: () => null,
-                              );
-
-                              // Extract stock and price
-                              double availableStock = materialInfo?['stock_quantity'] != null
-                                  ? (materialInfo!['stock_quantity'] as num).toDouble()
-                                  : 0.0;
-                              double materialPrice = materialInfo?['price'] != null
-                                  ? (materialInfo!['price'] as num).toDouble()
-                                  : 0.0;
-
-                              return Card(
-                                color: Colors.grey[50],
-                                child: ListTile(
-                                  title: Text('${material['material_code']} - ${material['material_name']}'),
-                                  subtitle: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      if (material['material_id'] != null)
-                                        Row(
-                                          children: [
-                                            Text('الرصيد المتاح: ',
-                                                style: TextStyle(color: Colors.teal[900])),
-                                            Text('${availableStock.toStringAsFixed(2)}',
-                                                style: TextStyle(
-                                                    color: availableStock > 0 ? Colors.green : Colors.red,
-                                                    fontWeight: FontWeight.bold)),
-                                            SizedBox(width: 16),
-                                            Text('السعر: ',
-                                                style: TextStyle(color: Colors.teal[900])),
-                                            Text('${materialPrice.toStringAsFixed(2)}دج',
-                                                style: TextStyle(color: Colors.indigo[800], fontWeight: FontWeight.bold)),
-                                          ],
-                                        ),
-                                      Row(
-                                        children: [
-                                          Text('الكمية: '),
-                                          SizedBox(
-                                            width: 80,
-                                            child: TextField(
-                                              decoration: InputDecoration(
-                                                isDense: true,
-                                                contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                              ),
-                                              keyboardType: TextInputType.number,
-                                              controller: materialQuantityControllers[index],
-                                              onChanged: (value) {
-                                                double quantity = double.tryParse(value) ?? 0.0;
-                                                selectedMaterials[index]['quantity_needed'] = quantity;
-                                                selectedMaterials[index]['total_cost'] =
-                                                    quantity * (selectedMaterials[index]['price'] as num? ?? 0.0);
-                                                setDialogState(() {});
-                                              },
-                                            ),
-                                          ),
-                                          SizedBox(width: 8),
-                                          Text('التكلفة: ${(material['total_cost'] as num? ?? 0.0).toStringAsFixed(2)}دج'),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                  trailing: IconButton(
-                                    icon: const Icon(Icons.delete, color: Colors.red),
-                                    onPressed: () async {
-                                      if (initial != null && material['material_id'] != null) {
-                                        await deleteMaterialFromModel(initial['id'], material['material_id']);
-                                      }
-                                      setDialogState(() {
-                                        removeMaterial(index);
-                                      });
-                                    },
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                            SizedBox(height: 8),
-
-                            // Add Material Button
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: ElevatedButton.icon(
-                                icon: const Icon(Icons.add),
-                                label: const Text('إضافة مادة'),
-                                onPressed: () {
-                                  setDialogState(() {
-                                    _showAddMaterialDialog(selectedMaterials, materialQuantityControllers, setDialogState);
-                                  });
+            content: Form(
+              key: _formKey,
+              child: SizedBox(
+                width: 500,
+                height: 600,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('المعلومات الأساسية', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                              SizedBox(height: 8),
+                              TextFormField(
+                                controller: nameCtrl,
+                                decoration: const InputDecoration(labelText: 'اسم الموديل'),
+                                validator: (value) {
+                                  if (value == null || value.isEmpty) {
+                                    return 'يرجى إدخال اسم الموديل';
+                                  }
+                                  return null;
                                 },
                               ),
-                            ),
-
-                            // Material selection dropdown for newly added items
-                            ...selectedMaterials.asMap().entries.map((entry) {
-                              int index = entry.key;
-                              Map<String, dynamic> material = entry.value;
-                              if (material['material_id'] == null) {
-                                return Padding(
-                                  padding: const EdgeInsets.only(top: 8.0),
-                                  child: DropdownButtonFormField<int>(
-                                    decoration: const InputDecoration(
-                                      labelText: 'اختر مادة خام',
-                                      border: OutlineInputBorder(),
-                                    ),
-                                    value: null,
-                                    items: availableMaterials
-                                        .where((m) => !selectedMaterials.any((sm) => sm['material_id'] == m['id']))
-                                        .map((m) {
-                                      // Show the stock in the dropdown
-                                      String label = '${m['code']} - ${m['name']}'
-                                          ' (${(m['price'] as num? ?? 0.0).toStringAsFixed(2)}دج'
-                                          ' | رصيد: ${(m['stock_quantity'] as num? ?? 0.0).toStringAsFixed(2)})';
-                                      return DropdownMenuItem<int>(
-                                        value: m['id'],
-                                        child: Text(label),
-                                      );
-                                    }).toList(),
-                                    onChanged: (int? selectedMaterialId) {
-                                      if (selectedMaterialId != null) {
-                                        setDialogState(() {
-                                          selectMaterial(index, selectedMaterialId);
-                                        });
-                                      }
-                                    },
-                                  ),
-                                );
-                              } else {
-                                return const SizedBox.shrink();
-                              }
-                            }).toList(),
-                          ],
+                              SizedBox(height: 8),
+                              TextFormField(
+                                controller: imageCtrl,
+                                decoration: const InputDecoration(labelText: 'رابط الصورة'),
+                              ),
+                              SizedBox(height: 8),
+                              TextFormField(
+                                controller: sizesCtrl,
+                                decoration: const InputDecoration(labelText: 'المقاسات (مثال: S-M-L-XL)'),
+                                onChanged: (val) {
+                                  nbrSizesCtrl.text = val.trim().isEmpty ? '0' : val.trim().split('-').length.toString();
+                                },
+                              ),
+                              SizedBox(height: 8),
+                              TextFormField(
+                                controller: nbrSizesCtrl,
+                                decoration: const InputDecoration(labelText: 'عدد المقاسات'),
+                                readOnly: true,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
+                      SizedBox(height: 16),
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('تكاليف العمالة', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                              SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: cutPriceCtrl,
+                                      decoration: const InputDecoration(labelText: 'سعر القص'),
+                                      keyboardType: TextInputType.number,
+                                      validator: (value) {
+                                        if (value == null || value.isEmpty) {
+                                          return 'يرجى إدخال سعر القص';
+                                        }
+                                        final numValue = double.tryParse(value);
+                                        if (numValue == null || numValue <= 0) {
+                                          return 'يجب أن يكون سعر القص رقمًا موجبًا';
+                                        }
+                                        return null;
+                                      },
+                                      onChanged: (_) => setDialogState(() {}),
+                                    ),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: sewingManualCtrl,
+                                      decoration: const InputDecoration(labelText: 'سعر الخياطة بالقطعة'),
+                                      keyboardType: TextInputType.number,
+                                      validator: (value) {
+                                        if (value == null || value.isEmpty) {
+                                          return 'يرجى إدخال سعر الخياطة';
+                                        }
+                                        final numValue = double.tryParse(value);
+                                        if (numValue == null || numValue <= 0) {
+                                          return 'يجب أن يكون سعر الخياطة رقمًا موجبًا';
+                                        }
+                                        return null;
+                                      },
+                                      onChanged: (_) => setDialogState(() {}),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: pressPriceCtrl,
+                                      decoration: const InputDecoration(labelText: 'سعر الكي'),
+                                      keyboardType: TextInputType.number,
+                                      validator: (value) {
+                                        if (value == null || value.isEmpty) {
+                                          return 'يرجى إدخال سعر الكي';
+                                        }
+                                        final numValue = double.tryParse(value);
+                                        if (numValue == null || numValue <= 0) {
+                                          return 'يجب أن يكون سعر الكي رقمًا موجبًا';
+                                        }
+                                        return null;
+                                      },
+                                      onChanged: (_) => setDialogState(() {}),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 16),
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('خدمات إضافية', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                              SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: washingCtrl,
+                                      decoration: const InputDecoration(labelText: 'الغسيل'),
+                                      keyboardType: TextInputType.number,
+                                      validator: (value) {
+                                        if (value != null && value.isNotEmpty) {
+                                          final numValue = double.tryParse(value);
+                                          if (numValue == null || numValue < 0) {
+                                            return 'يرجى إدخال رقم صالح';
+                                          }
+                                        }
+                                        return null;
+                                      },
+                                      onChanged: (_) => setDialogState(() {}),
+                                    ),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: embroideryCtrl,
+                                      decoration: const InputDecoration(labelText: 'التطريز'),
+                                      keyboardType: TextInputType.number,
+                                      validator: (value) {
+                                        if (value != null && value.isNotEmpty) {
+                                          final numValue = double.tryParse(value);
+                                          if (numValue == null || numValue < 0) {
+                                            return 'يرجى إدخ  صالح';
+                                          }
+                                        }
+                                        return null;
+                                      },
+                                      onChanged: (_) => setDialogState(() {}),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: laserCtrl,
+                                      decoration: const InputDecoration(labelText: 'ليزر'),
+                                      keyboardType: TextInputType.number,
+                                      validator: (value) {
+                                        if (value != null && value.isNotEmpty) {
+                                          final numValue = double.tryParse(value);
+                                          if (numValue == null || numValue < 0) {
+                                            return 'يرجى إدخال رقم صالح';
+                                          }
+                                        }
+                                        return null;
+                                      },
+                                      onChanged: (_) => setDialogState(() {}),
+                                    ),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: printingCtrl,
+                                      decoration: const InputDecoration(labelText: 'الطباعة'),
+                                      keyboardType: TextInputType.number,
+                                      validator: (value) {
+                                        if (value != null && value.isNotEmpty) {
+                                          final numValue = double.tryParse(value);
+                                          if (numValue == null || numValue < 0) {
+                                            return 'يرجى إدخال رقم صالح';
+                                          }
+                                        }
+                                        return null;
+                                      },
+                                      onChanged: (_) => setDialogState(() {}),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: 8),
+                              TextFormField(
+                                controller: crochetCtrl,
+                                decoration: const InputDecoration(labelText: 'كروشيه'),
+                                keyboardType: TextInputType.number,
+                                validator: (value) {
+                                  if (value != null && value.isNotEmpty) {
+                                    final numValue = double.tryParse(value);
+                                    if (numValue == null || numValue < 0) {
+                                      return 'يرجى إدخال رقم صالح';
+                                    }
+                                  }
+                                  return null;
+                                },
+                                onChanged: (_) => setDialogState(() {}),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 16),
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('المواد الخام', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                  // Text('التكلفة الإجمالية: ${totalMaterialCost.toStringAsFixed(2)}دج',
+                                  //     style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green)),
+                                ],
+                              ),
+                              SizedBox(height: 8),
+                              ...selectedMaterials.asMap().entries.map((entry) {
+                                int index = entry.key;
+                                Map<String, dynamic> material = entry.value;
+                                var materialInfo = availableMaterials.firstWhere(
+                                  (m) => m['id'] == material['material_id'],
+                                  orElse: () => null,
+                                );
+                                double availableStock = materialInfo?['stock_quantity'] != null
+                                    ? (materialInfo!['stock_quantity'] as num).toDouble()
+                                    : 0.0;
 
-                    SizedBox(height: 16),
-
-                  ],
+                                return Card(
+                                  color: Colors.grey[50],
+                                  child: ListTile(
+                                    title: Text('${material['material_code']} - ${material['material_name']}'),
+                                    subtitle: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        if (material['material_id'] != null)
+                                          Row(
+                                            children: [
+                                              Text('الرصيد المتاح: ', style: TextStyle(color: Colors.teal[900])),
+                                              Text('${availableStock.toStringAsFixed(2)}',
+                                                  style: TextStyle(
+                                                      color: availableStock > 0 ? Colors.green : Colors.red,
+                                                      fontWeight: FontWeight.bold)),
+                                              SizedBox(width: 16),
+                                              // Text('السعر: ', style: TextStyle(color: Colors.teal[900])),
+                                              // Text(material['price'] != null
+                                              //     ? '${(material['price'] as num).toStringAsFixed(2)}دج'
+                                              //     : 'غير محدد',
+                                              //     style: TextStyle(
+                                              //         color: material['price'] != null ? Colors.indigo[800] : Colors.red,
+                                              //         fontWeight: FontWeight.bold)),
+                                            ],
+                                          ),
+                                        Row(
+                                          children: [
+                                            Text('الكمية: '),
+                                            SizedBox(
+                                              width: 80,
+                                              child: TextFormField(
+                                                decoration: InputDecoration(
+                                                  isDense: true,
+                                                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                ),
+                                                keyboardType: TextInputType.number,
+                                                controller: materialQuantityControllers[index],
+                                                validator: (value) {
+                                                  if (material['material_id'] != null && (value == null || value.isEmpty)) {
+                                                    return 'الكمية مطلوبة';
+                                                  }
+                                                  final numValue = double.tryParse(value ?? '');
+                                                  if (material['material_id'] != null && (numValue == null || numValue <= 0)) {
+                                                    return 'يجب أن تكون الكمية موجبة';
+                                                  }
+                                                  return null;
+                                                },
+                                                onChanged: (value) {
+                                                  double quantity = double.tryParse(value) ?? 0.0;
+                                                  selectedMaterials[index]['quantity_needed'] = quantity;
+                                                  selectedMaterials[index]['total_cost'] =
+                                                      quantity * (material['price'] as num? ?? 0.0);
+                                                  setDialogState(() {});
+                                                },
+                                              ),
+                                            ),
+                                            SizedBox(width: 8),
+                                            // Text('التكلفة: ${(material['total_cost'] as num? ?? 0.0).toStringAsFixed(2)}دج'),
+                                          ],
+                                        ),
+                                        if (material['price'] == null)
+                                          Text('تحذير: هذه المادة ليس لها سعر محدد', style: TextStyle(color: Colors.red)),
+                                      ],
+                                    ),
+                                    trailing: IconButton(
+                                      icon: const Icon(Icons.delete, color: Colors.red),
+                                      onPressed: () async {
+                                        if (initial != null && material['material_id'] != null) {
+                                          await deleteMaterialFromModel(initial['id'], material['material_id']);
+                                        }
+                                        setDialogState(() {
+                                          removeMaterial(index);
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                              SizedBox(height: 8),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: ElevatedButton.icon(
+                                  icon: const Icon(Icons.add),
+                                  label: const Text('إضافة مادة'),
+                                  onPressed: () {
+                                    setDialogState(() {
+                                      _showAddMaterialDialog(selectedMaterials, materialQuantityControllers, setDialogState);
+                                    });
+                                  },
+                                ),
+                              ),
+                              ...selectedMaterials.asMap().entries.map((entry) {
+                                int index = entry.key;
+                                Map<String, dynamic> material = entry.value;
+                                if (material['material_id'] == null) {
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 8.0),
+                                    child: DropdownButtonFormField<int>(
+                                      decoration: const InputDecoration(
+                                        labelText: 'اختر مادة خام',
+                                        border: OutlineInputBorder(),
+                                      ),
+                                      value: null,
+                                      items: availableMaterials
+                                          .where((m) => !selectedMaterials.any((sm) => sm['material_id'] == m['id']))
+                                          .map((m) {
+                                        String label = '${m['code']} - ${m['name']} '
+                                            '(${(m['price'] as num? ?? 0.0).toStringAsFixed(2)}دج '
+                                            '| رصيد: ${(m['stock_quantity'] as num? ?? 0.0).toStringAsFixed(2)})';
+                                        return DropdownMenuItem<int>(
+                                          value: m['id'],
+                                          child: Text(label),
+                                        );
+                                      }).toList(),
+                                      onChanged: (int? selectedMaterialId) {
+                                        if (selectedMaterialId != null) {
+                                          setDialogState(() {
+                                            selectMaterial(index, selectedMaterialId);
+                                          });
+                                        }
+                                      },
+                                    ),
+                                  );
+                                } else {
+                                  return const SizedBox.shrink();
+                                }
+                              }).toList(),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
             actions: [
               TextButton(
                 onPressed: () {
-                  // Dispose all controllers!
                   materialQuantityControllers.forEach((ctrl) => ctrl.dispose());
                   Navigator.pop(context);
                 },
@@ -766,63 +937,65 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
               ),
               ElevatedButton(
                 onPressed: () async {
-                  if (nameCtrl.text.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('اسم الموديل مطلوب'))
-                    );
-                    return;
-                  }
-                  selectedMaterials.removeWhere((material) => material['material_id'] == null);
-
-                  final data = {
-                    'name': nameCtrl.text,
-                    'start_date': startDate.toIso8601String(),
-                    'image_url': imageCtrl.text,
-                    'cut_price': double.tryParse(cutPriceCtrl.text) ?? 0,
-                    'sewing_price': double.tryParse(sewingManualCtrl.text) ?? 0,
-                    'press_price': double.tryParse(pressPriceCtrl.text) ?? 0,
-                    'assembly_price': 0,
-                    'electricity': 0,
-                    'rent': 0,
-                    'maintenance': 0,
-                    'water': 0,
-                    'washing': double.tryParse(washingCtrl.text) ?? 0,
-                    'embroidery': double.tryParse(embroideryCtrl.text) ?? 0,
-                    'laser': double.tryParse(laserCtrl.text) ?? 0,
-                    'printing': double.tryParse(printingCtrl.text) ?? 0,
-                    'crochet': double.tryParse(crochetCtrl.text) ?? 0,
-                    'sizes': sizesCtrl.text,
-                    'nbr_of_sizes': int.tryParse(nbrSizesCtrl.text) ?? 0,
-                  };
-
-                  try {
-                    int modelId;
-                    if (initial == null) {
-                      final result = await addModel(data);
-                      modelId = result['id'];
-                    } else {
-                      await updateModel(initial['id'], data);
-                      modelId = initial['id'];
-                      await http.delete(Uri.parse('$baseUrl/models/$modelId/materials/all'));
+                  if (_formKey.currentState!.validate()) {
+                    bool hasInvalidMaterial = selectedMaterials.any((m) =>
+                        m['material_id'] != null && (m['quantity_needed'] == null || m['quantity_needed'] <= 0));
+                    if (hasInvalidMaterial) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('يرجى إدخال كمية صالحة لجميع المواد المختارة')),
+                      );
+                      return;
                     }
+                    selectedMaterials.removeWhere((material) => material['material_id'] == null);
 
-                    for (var material in selectedMaterials) {
-                      await addMaterialToModel(modelId, material['material_id'], material['quantity_needed']);
+                    final data = {
+                      'name': nameCtrl.text,
+                      'start_date': startDate.toIso8601String(),
+                      'image_url': imageCtrl.text,
+                      'cut_price': double.tryParse(cutPriceCtrl.text) ?? 0,
+                      'sewing_price': double.tryParse(sewingManualCtrl.text) ?? 0,
+                      'press_price': double.tryParse(pressPriceCtrl.text) ?? 0,
+                      'assembly_price': 0,
+                      'electricity': 0,
+                      'rent': 0,
+                      'maintenance': 0,
+                      'water': 0,
+                      'washing': double.tryParse(washingCtrl.text) ?? 0,
+                      'embroidery': double.tryParse(embroideryCtrl.text) ?? 0,
+                      'laser': double.tryParse(laserCtrl.text) ?? 0,
+                      'printing': double.tryParse(printingCtrl.text) ?? 0,
+                      'crochet': double.tryParse(crochetCtrl.text) ?? 0,
+                      'sizes': sizesCtrl.text,
+                      'nbr_of_sizes': int.tryParse(nbrSizesCtrl.text) ?? 0,
+                    };
+
+                    try {
+                      int modelId;
+                      if (initial == null) {
+                        final result = await addModel(data);
+                        modelId = result['id'];
+                      } else {
+                        await updateModel(initial['id'], data);
+                        modelId = initial['id'];
+                        await http.delete(Uri.parse('$baseUrl/models/$modelId/materials/all'));
+                      }
+
+                      for (var material in selectedMaterials) {
+                        await addMaterialToModel(modelId, material['material_id'], material['quantity_needed']);
+                      }
+
+                      materialQuantityControllers.forEach((ctrl) => ctrl.dispose());
+                      Navigator.pop(context);
+                      await fetchModels();
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(initial == null ? 'تم إضافة الموديل بنجاح' : 'تم تحديث الموديل بنجاح')),
+                      );
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('خطأ: $e')),
+                      );
                     }
-
-                    // Dispose all controllers!
-                    materialQuantityControllers.forEach((ctrl) => ctrl.dispose());
-
-                    Navigator.pop(context);
-                    await fetchModels();
-
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text(initial == null ? 'تم إضافة الموديل بنجاح' : 'تم تحديث الموديل بنجاح'))
-                    );
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('خطأ: $e'))
-                    );
                   }
                 },
                 child: const Text('حفظ'),
@@ -882,7 +1055,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
   void _showAddMaterialDialog(
     List<Map<String, dynamic>> selectedMaterials,
     List<TextEditingController> materialQuantityControllers,
-    void Function(void Function()) setDialogState
+    void Function(void Function()) setDialogState,
   ) {
     int? selectedMaterialTypeId;
     int? selectedMaterialId;
@@ -930,10 +1103,20 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                   onChanged: (val) => setState(() => selectedMaterialId = val),
                 ),
                 const SizedBox(height: 16),
-                TextField(
+                TextFormField(
                   controller: quantityController,
                   decoration: const InputDecoration(labelText: 'الكمية المطلوبة'),
                   keyboardType: TextInputType.number,
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'يرجى إدخال الكمية';
+                    }
+                    final numValue = double.tryParse(value);
+                    if (numValue == null || numValue <= 0) {
+                      return 'يجب أن تكون الكمية موجبة';
+                    }
+                    return null;
+                  },
                   onChanged: (v) => quantity = double.tryParse(v) ?? 1.0,
                 ),
               ],
@@ -977,22 +1160,17 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
     setState(() => isLoading = true);
     try {
       final url = '$baseUrl/models/in-production';
-      
       final response = await http.get(Uri.parse(url));
-      
       if (response.statusCode == 200) {
         final responseBody = response.body;
-        
         if (responseBody.isEmpty) {
           setState(() {
             inProductionBatches = [];
           });
           return;
         }
-        
         try {
           final List<dynamic> data = jsonDecode(responseBody);
-          
           setState(() {
             inProductionBatches = data;
           });
@@ -1004,7 +1182,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error fetching in-production models: $e'))
+        SnackBar(content: Text('Error fetching in-production models: $e')),
       );
     } finally {
       setState(() => isLoading = false);
@@ -1052,7 +1230,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                   TextField(
                     controller: manualQuantityCtrl,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'الكمية بالإنتاج اليدوي'),
+                    decoration: const InputDecoration(labelText: 'كمية الإنتاج بالقطعة'),
                     onChanged: (val) {
                       setDialogState(() {
                         manualQuantity = int.tryParse(val) ?? 0;
@@ -1063,7 +1241,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                   TextField(
                     controller: automaticQuantityCtrl,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'الكمية بالإنتاج الآلي'),
+                    decoration: const InputDecoration(labelText: 'كمية الإنتاج ب خط الإنتاج'),
                     onChanged: (val) {
                       setDialogState(() {
                         automaticQuantity = int.tryParse(val) ?? 0;
@@ -1080,7 +1258,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
               ),
               ElevatedButton(
                 onPressed: (selectedModelForProductionId != null &&
-                            (manualQuantity > 0 || automaticQuantity > 0))
+                        (manualQuantity > 0 || automaticQuantity > 0))
                     ? () async {
                         Navigator.pop(context);
                         await _initiateProductionAdvanced(
@@ -1099,8 +1277,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
     );
   }
 
-  Future<void> _initiateProductionAdvanced(
-      int modelId, int manualQuantity, int automaticQuantity) async {
+  Future<void> _initiateProductionAdvanced(int modelId, int manualQuantity, int automaticQuantity) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/models/initiate-production'),
@@ -1111,7 +1288,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
           'automatic_quantity': automaticQuantity,
         }),
       );
-
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم بدء الإنتاج بنجاح.')),
@@ -1146,7 +1322,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
           ]
         }),
       );
-
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم بدء الإنتاج بنجاح.')),
@@ -1169,10 +1344,8 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
     int totalQuantity = detail['quantity'];
     int numberOfSizes = detail['sizes'].length;
     if (numberOfSizes == 0) return;
-
     int baseQuantityPerSize = totalQuantity ~/ numberOfSizes;
     int remainder = totalQuantity % numberOfSizes;
-
     for (int i = 0; i < numberOfSizes; i++) {
       detail['sizes'][i]['quantity'] = baseQuantityPerSize + (i < remainder ? 1 : 0);
     }
@@ -1188,7 +1361,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
           'production_details': productionDetails,
         }),
       );
-
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم بدء الإنتاج بنجاح. تم خصم المواد وإضافة دفعات الإنتاج.')),
@@ -1213,11 +1385,23 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
         Uri.parse('$baseUrl/models/complete-production/$batchId'),
         headers: {'Content-Type': 'application/json'},
       );
-
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم إكمال دفعة الإنتاج وإضافتها إلى المخزون الجاهز.')),
         );
+        final recalcResponse = await http.post(
+          Uri.parse('$baseUrl/sewing/recalc-global-prices'),
+          headers: {'Content-Type': 'application/json'},
+        );
+        if (recalcResponse.statusCode == 200) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تم تحديث الأسعار العالمية بنجاح.')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('فشل في تحديث الأسعار: ${recalcResponse.reasonPhrase}')),
+          );
+        }
         await fetchInProductionBatches();
       } else {
         final errorBody = jsonDecode(response.body);
@@ -1235,7 +1419,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
   Widget _buildArchiveModels() {
     return Row(
       children: [
-        // Sidebar: List of models
         Container(
           width: 400,
           decoration: BoxDecoration(
@@ -1256,8 +1439,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    
-                    // Season filter dropdown - Add this section
                     if (seasons.isNotEmpty)
                       Column(
                         children: [
@@ -1291,7 +1472,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                           const SizedBox(height: 12),
                         ],
                       ),
-                    
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
@@ -1335,9 +1515,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                         itemBuilder: (_, i) => Card(
                           margin: const EdgeInsets.symmetric(vertical: 4),
                           elevation: selectedModelId == archiveModels[i]['id'] ? 4 : 1,
-                          color: selectedModelId == archiveModels[i]['id']
-                              ? Colors.grey[100]
-                              : Colors.white,
+                          color: selectedModelId == archiveModels[i]['id'] ? Colors.grey[100] : Colors.white,
                           child: ListTile(
                             title: Text(
                               archiveModels[i]['name'],
@@ -1361,10 +1539,15 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                                   icon: const Icon(Icons.edit, color: Colors.teal),
                                   onPressed: () => addOrEditModel(initial: archiveModels[i]),
                                 ),
+                                // IconButton(
+                                //   icon: const Icon(Icons.delete, color: Colors.red),
+                                //   onPressed: () => deleteModel(archiveModels[i]['id']),
+                                // ),
                                 IconButton(
-                                  icon: const Icon(Icons.delete, color: Colors.red),
-                                  onPressed: () => deleteModel(archiveModels[i]['id']),
-                                ),
+  icon: const Icon(Icons.delete, color: Colors.red),
+  onPressed: () => _deleteModel(archiveModels[i]),
+),
+
                               ],
                             ),
                           ),
@@ -1375,7 +1558,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
           ),
         ),
         const VerticalDivider(width: 1),
-        // Main area: Model details
         Expanded(
           child: selectedModel == null
               ? Center(
@@ -1396,7 +1578,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Header
                       Row(
                         children: [
                           if (selectedModel!['image_url'] != null && selectedModel!['image_url'].isNotEmpty)
@@ -1422,10 +1603,10 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                               children: [
                                 Text(
                                   selectedModel!['name'],
-                                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.indigo[800],
-                                  ),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .headlineSmall
+                                      ?.copyWith(fontWeight: FontWeight.bold, color: Colors.indigo[800]),
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
@@ -1437,11 +1618,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                                     padding: const EdgeInsets.only(top: 4.0),
                                     child: Text(
                                       'المقاسات: ${selectedModel!['sizes']}',
-                                      style: TextStyle(
-                                        color: Colors.teal[700],
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.bold,
-                                      ),
+                                      style: TextStyle(color: Colors.teal[700], fontSize: 15, fontWeight: FontWeight.bold),
                                     ),
                                   ),
                               ],
@@ -1449,10 +1626,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 24),
-
-                      // Main cost summary cards
                       FutureBuilder<Map<String, dynamic>?>(
                         future: fetchModelCost(selectedModelId!),
                         builder: (context, snapshot) {
@@ -1460,7 +1634,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                             final costData = snapshot.data!;
                             return Column(
                               children: [
-                                // Manual cost card
                                 Card(
                                   color: Colors.blue[50],
                                   child: Padding(
@@ -1469,12 +1642,8 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          'تكلفة الإنتاج اليدوي',
-                                          style: TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.blue[800],
-                                          ),
+                                          'تكلفة الإنتاج بالقطعة',
+                                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue[800]),
                                         ),
                                         const SizedBox(height: 12),
                                         Row(
@@ -1502,7 +1671,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                                         Row(
                                           children: [
                                             Expanded(
-                                              child: _costItem('تكلفة التغليف', costData['emballage_cost'] ?? 0, Colors.brown[700]!),
+                                              child: _costItem('تكلفة الأمبالاج', costData['emballage_cost'] ?? 0, Colors.brown[700]!),
                                             ),
                                           ],
                                         ),
@@ -1513,7 +1682,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                                   ),
                                 ),
                                 const SizedBox(height: 16),
-                                // Automatic cost card
                                 Card(
                                   color: Colors.orange[50],
                                   child: Padding(
@@ -1522,12 +1690,8 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          'تكلفة الإنتاج الآلي',
-                                          style: TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.orange[800],
-                                          ),
+                                          'تكلفة الإنتاج ب خط الإنتاج',
+                                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.orange[800]),
                                         ),
                                         const SizedBox(height: 12),
                                         Row(
@@ -1555,10 +1719,10 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                                         Row(
                                           children: [
                                             Expanded(
-                                              child: _costItem('تكلفة الخياطة آلي', costData['sewing_cost'] ?? 0, Colors.cyan[700]!),
+                                              child: _costItem('تكلفة الخياطة ب خط الإنتاج', costData['sewing_cost'] ?? 0, Colors.cyan[700]!),
                                             ),
                                             Expanded(
-                                              child: _costItem('تكلفة التغليف', costData['emballage_cost'] ?? 0, Colors.brown[700]!),
+                                              child: _costItem('تكلفة الأمبالاج', costData['emballage_cost'] ?? 0, Colors.brown[700]!),
                                             ),
                                           ],
                                         ),
@@ -1569,65 +1733,77 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                                   ),
                                 ),
                                 const SizedBox(height: 16),
-                                // تفاصيل التكاليف (big detailed card)
                                 Card(
-                                    color: Colors.grey[50],
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(16),
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'تفاصيل التكاليف',
-                                            style: TextStyle(
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.blueGrey[900],
+                                  color: Colors.grey[50],
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'تفاصيل التكاليف',
+                                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blueGrey[900]),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: _costItem('سعر القص', selectedModel!['cut_price'], Colors.orange[700]!),
                                             ),
-                                          ),
-                                          const SizedBox(height: 12),
-                                          // All details as cost rows
-                                          Row(
-                                            children: [
-                                              Expanded(child: _costItem('سعر القص', selectedModel!['cut_price'], Colors.orange[700]!)),
-                                              Expanded(child: _costItem('سعر الخياطة يدوي', selectedModel!['sewing_price'], Colors.orange[900]!)),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 8),
-                                          Row(
-                                            children: [
-                                              Expanded(child: _costItem('سعر الكي', selectedModel!['press_price'], Colors.brown[700]!)),
-                                              Expanded(child: _costItem('تكلفة التغليف', costData['emballage_cost'] ?? 0, Colors.brown[800]!)),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 8),
-                                          Row(
-                                            children: [
-                                              Expanded(child: _costItem('تكلفة الخياطة آلي', costData['sewing_cost'] ?? 0, Colors.cyan[700]!)),
-                                              Expanded(child: _costItem('الغسيل', selectedModel!['washing'], Colors.teal[800]!)),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 8),
-                                          Row(
-                                            children: [
-                                              Expanded(child: _costItem('التطريز', selectedModel!['embroidery'], Colors.purple[700]!)),
-                                              Expanded(child: _costItem('ليزر', selectedModel!['laser'], Colors.grey[700]!)),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 8),
-                                          Row(
-                                            children: [
-                                              Expanded(child: _costItem('الطباعة', selectedModel!['printing'], Colors.blue[700]!)),
-                                              Expanded(child: _costItem('كروشيه', selectedModel!['crochet'], Colors.pink[700]!)),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
+                                            Expanded(
+                                              child: _costItem('سعر الخياطة بالقطعة', selectedModel!['sewing_price'], Colors.orange[900]!),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: _costItem('سعر الكي', selectedModel!['press_price'], Colors.brown[700]!),
+                                            ),
+                                            Expanded(
+                                              child: _costItem('تكلفة الأمبالاج', costData['emballage_cost'] ?? 0, Colors.brown[800]!),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: _costItem('تكلفة الخياطة ب خط الإنتاج', costData['sewing_cost'] ?? 0, Colors.cyan[700]!),
+                                            ),
+                                            Expanded(
+                                              child: _costItem('الغسيل', selectedModel!['washing'], Colors.teal[800]!),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: _costItem('التطريز', selectedModel!['embroidery'], Colors.purple[700]!),
+                                            ),
+                                            Expanded(
+                                              child: _costItem('ليزر', selectedModel!['laser'], Colors.grey[700]!),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: _costItem('الطباعة', selectedModel!['printing'], Colors.blue[700]!),
+                                            ),
+                                            Expanded(
+                                              child: _costItem('كروشيه', selectedModel!['crochet'], Colors.pink[700]!),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
                                     ),
                                   ),
-
+                                ),
                                 const SizedBox(height: 16),
-                                // Monthly overheads card (styled like others)
                                 Card(
                                   color: Colors.teal[50],
                                   child: Padding(
@@ -1635,24 +1811,31 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text('تفاصيل التكاليف الشهرية', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.teal[900])),
+                                        Text('تفاصيل التكاليف الشهرية',
+                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.teal[900])),
                                         const Divider(height: 24),
                                         Row(
                                           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                                           children: [
-                                            Expanded(child: _costItem('الكهرباء', costData['electricity_share'], Colors.amber[700]!)),
+                                            Expanded(
+                                              child: _costItem('الكهرباء', costData['electricity_share'], Colors.amber[700]!),
+                                            ),
                                             Expanded(child: _costItem('الإيجار', costData['rent_share'], Colors.brown[700]!)),
-                                            Expanded(child: _costItem('الصيانة', costData['maintenance_share'], Colors.grey[700]!)),
+                                            Expanded(
+                                              child: _costItem('الصيانة', costData['maintenance_share'], Colors.grey[700]!),
+                                            ),
                                             Expanded(child: _costItem('الماء', costData['water_share'], Colors.blue[700]!)),
-                                            Expanded(child: _costItem('النقل', costData['transport_share'], Colors.indigo[700]!)),
+                                            Expanded(
+                                              child: _costItem('النقل', costData['transport_share'], Colors.indigo[700]!),
+                                            ),
                                           ],
                                         ),
                                         const SizedBox(height: 16),
                                         Text('عدد القطع المنتجة هذا الشهر: ${costData['pieces']}',
-                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87)),
+                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.black87)),
                                         const SizedBox(height: 8),
                                         Text(_getDivisionModeText(),
-                                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.teal[800])),
+                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.teal[800])),
                                       ],
                                     ),
                                   ),
@@ -1669,8 +1852,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                           );
                         },
                       ),
-
-                      // Materials Section
                       Card(
                         child: Padding(
                           padding: const EdgeInsets.all(16),
@@ -1702,7 +1883,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                                             Text('السعر: ${(material['price'] as num? ?? 0.0).toStringAsFixed(2)}دج'),
                                           if (material['total_cost'] != null)
                                             Text('التكلفة الإجمالية: ${(material['total_cost'] as num? ?? 0.0).toStringAsFixed(2)}دج',
-                                                 style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green[700])),
+                                                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green[700])),
                                         ],
                                       ),
                                     ),
@@ -1736,7 +1917,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
   Widget _buildProductionModels() {
     return Row(
       children: [
-        // Sidebar: List of production batches
         Container(
           width: 400,
           decoration: BoxDecoration(
@@ -1750,11 +1930,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                   children: [
                     Text(
                       'موديلات تحت الإنتاج',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green[800],
-                      ),
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green[800]),
                     ),
                     const SizedBox(height: 16),
                     SizedBox(
@@ -1810,7 +1986,8 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                                 color: Colors.white,
                                 child: ListTile(
                                   title: Text('${batch['model_name']} - ${batch['color']} (${batch['size']})'),
-                                  subtitle: Text('الكمية: ${batch['quantity']} | تاريخ: ${formatDate(batch['production_date'] ?? "")}'),
+                                  subtitle: Text(
+                                      'الكمية: ${batch['quantity']} | تاريخ: ${formatDate(batch['production_date'] ?? "")}'),
                                   leading: CircleAvatar(
                                     backgroundColor: Colors.green[200],
                                     child: Icon(Icons.work, color: Colors.green[800]),
@@ -1823,11 +2000,16 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
                                         tooltip: 'تعديل الدفعة',
                                         onPressed: () => showEditProductionBatchDialog(batch),
                                       ),
+                                      // IconButton(
+                                      //   icon: const Icon(Icons.delete, color: Colors.red),
+                                      //   tooltip: 'حذف الدفعة',
+                                      //   onPressed: () => deleteProductionBatch(batch['id']),
+                                      // ),
                                       IconButton(
-                                        icon: const Icon(Icons.delete, color: Colors.red),
-                                        tooltip: 'حذف الدفعة',
-                                        onPressed: () => deleteProductionBatch(batch['id']),
-                                      ),
+  icon: const Icon(Icons.delete, color: Colors.red),
+  tooltip: 'حذف الدفعة',
+  onPressed: () => _deleteProductionBatch(inProductionBatches[i]),
+),
                                       IconButton(
                                         icon: const Icon(Icons.check_circle, color: Colors.blue),
                                         tooltip: 'إكمال الإنتاج',
@@ -1844,7 +2026,6 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
           ),
         ),
         const VerticalDivider(width: 1),
-        // Main area: Instructions or selected batch details (optional)
         Expanded(
           child: Center(
             child: Column(
@@ -1910,42 +2091,36 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Tab selection using ChoiceChip
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(
-            tabs.length,
-            (i) => Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: ChoiceChip(
-                label: Text(tabs[i]),
-                selected: selectedTab == i,
-                selectedColor: Theme.of(context).colorScheme.primary,
-                labelStyle: TextStyle(
-                  color: selectedTab == i
-                      ? Colors.white
-                      : Theme.of(context).colorScheme.onSurface,
-                  fontWeight: FontWeight.bold,
-                ),
-                onSelected: (selected) {
-                  if (selected) {
-                    setState(() {
-                      selectedTab = i;
-                      if (i == 1) { // If switching to Production tab
-                        fetchInProductionBatches();
-                      } else { // If switching to Archive tab
-                        fetchModels();
-                      }
-                    });
-                  }
-                },
+          children: availableTabs.map((tab) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: ChoiceChip(
+              label: Text(tab),
+              selected: selectedTab == tab,
+              selectedColor: Theme.of(context).colorScheme.primary,
+              labelStyle: TextStyle(
+                color: selectedTab == tab ? Colors.white : Theme.of(context).colorScheme.onSurface,
+                fontWeight: FontWeight.bold,
               ),
+              onSelected: (selected) {
+                if (selected) {
+                  setState(() {
+                    selectedTab = tab;
+                    if (tab == 'موديلات تحت الإنتاج') {
+                      fetchInProductionBatches();
+                    } else {
+                      fetchModels();
+                    }
+                  });
+                }
+              },
             ),
-          ),
+          )).toList(),
         ),
         const SizedBox(height: 16),
         Expanded(
-          child: selectedTab == 0 ? _buildArchiveModels() : _buildProductionModels(),
+          child: selectedTab == 'أرشيف الموديلات' ? _buildArchiveModels() : _buildProductionModels(),
         ),
       ],
     );

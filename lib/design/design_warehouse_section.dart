@@ -200,7 +200,7 @@ class _DesignWarehouseSectionState extends State<DesignWarehouseSection> {
               _infoRow('نسبة الإستغلال', '${money(p['util_percent'])}%'),
               _infoRow('Placed', s(p['placed'])),
               _infoRow('المقاسات/الكميات', s(p['sizes_text'])),
-              _infoRow('السعر', '${money(p['price'])} دج'),
+              // _infoRow('السعر', '${money(p['price'])} دج'),
               _infoRow('الوصف', s(p['description'])),
               _infoRow('الكمية بالمخزن', money(p['quantity'])),
             ],
@@ -348,114 +348,114 @@ class _DesignWarehouseSectionState extends State<DesignWarehouseSection> {
   }
 
   // ================== RAW MATERIALS NETWORK ==================
-  Future<void> _addFromModelDialog() async {
-    int? modelId;
-    double qty = 0;
-    List<dynamic> models = [];
-    bool loading = true;
-    String? err;
-    final qtyCtl = TextEditingController();
+  // Future<void> _addFromModelDialog() async {
+  //   int? modelId;
+  //   double qty = 0;
+  //   List<dynamic> models = [];
+  //   bool loading = true;
+  //   String? err;
+  //   final qtyCtl = TextEditingController();
 
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(builder: (ctx, setD) {
-        Future<void> loadModels() async {
-          setD(() {
-            loading = true;
-            err = null;
-          });
-          try {
-            final r = await http.get(Uri.parse('$baseUrl/models'));
-            if (r.statusCode == 200) {
-              models = jsonDecode(r.body) as List;
-            } else {
-              err = '(${r.statusCode})';
-            }
-          } catch (e) {
-            err = 'خطأ $e';
-          } finally {
-            setD(() => loading = false);
-          }
-        }
+  //   await showDialog(
+  //     context: context,
+  //     builder: (_) => StatefulBuilder(builder: (ctx, setD) {
+  //       Future<void> loadModels() async {
+  //         setD(() {
+  //           loading = true;
+  //           err = null;
+  //         });
+  //         try {
+  //           final r = await http.get(Uri.parse('$baseUrl/models'));
+  //           if (r.statusCode == 200) {
+  //             models = jsonDecode(r.body) as List;
+  //           } else {
+  //             err = '(${r.statusCode})';
+  //           }
+  //         } catch (e) {
+  //           err = 'خطأ $e';
+  //         } finally {
+  //           setD(() => loading = false);
+  //         }
+  //       }
 
-        if (loading) loadModels();
+  //       if (loading) loadModels();
 
-        bool canSave() => modelId != null && qty > 0;
+  //       bool canSave() => modelId != null && qty > 0;
 
-        return AlertDialog(
-          title: const Text('إضافة من الموديلات'),
-          content: SizedBox(
-            width: 420,
-            child: loading
-                ? const Center(child: CircularProgressIndicator())
-                : err != null
-                    ? Text(err!)
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          DropdownButtonFormField<int>(
-                            value: modelId,
-                            isExpanded: true,
-                            decoration: const InputDecoration(labelText: 'اختر الموديل'),
-                            items: models
-                                .map((m) => DropdownMenuItem<int>(
-                                      value: m['id'] as int,
-                                      child: Text(
-                                        '${s(m["model_name"])} (#${m["id"]})',
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ))
-                                .toList(),
-                            onChanged: (v) {
-                              modelId = v;
-                              setD(() {});
-                            },
-                          ),
-                          const SizedBox(height: 12),
-                          TextFormField(
-                            controller: qtyCtl,
-                            decoration: const InputDecoration(labelText: 'الكمية'),
-                            keyboardType: TextInputType.number,
-                            onChanged: (v) {
-                              qty = double.tryParse(v) ?? 0;
-                              setD(() {});
-                            },
-                          ),
-                        ],
-                      ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-            ElevatedButton(
-              onPressed: !canSave()
-                  ? null
-                  : () async {
-                      final body = jsonEncode({
-                        'warehouse_id': 1,
-                        'model_id': modelId,
-                        'quantity': qty,
-                      });
-                      final r = await http.post(
-                        Uri.parse('$baseUrl/warehouse/product-inventory'),
-                        headers: {'Content-Type': 'application/json'},
-                        body: body,
-                      );
-                      if (r.statusCode == 200) {
-                        Navigator.pop(ctx);
-                        await _fetchReady();
-                      } else {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('فشل الإضافة (${r.statusCode})')),
-                        );
-                      }
-                    },
-              child: const Text('حفظ'),
-            ),
-          ],
-        );
-      }),
-    );
-  }
+  //       return AlertDialog(
+  //         title: const Text('إضافة من الموديلات'),
+  //         content: SizedBox(
+  //           width: 420,
+  //           child: loading
+  //               ? const Center(child: CircularProgressIndicator())
+  //               : err != null
+  //                   ? Text(err!)
+  //                   : Column(
+  //                       mainAxisSize: MainAxisSize.min,
+  //                       children: [
+  //                         DropdownButtonFormField<int>(
+  //                           value: modelId,
+  //                           isExpanded: true,
+  //                           decoration: const InputDecoration(labelText: 'اختر الموديل'),
+  //                           items: models
+  //                               .map((m) => DropdownMenuItem<int>(
+  //                                     value: m['id'] as int,
+  //                                     child: Text(
+  //                                       '${s(m["model_name"])} (#${m["id"]})',
+  //                                       overflow: TextOverflow.ellipsis,
+  //                                     ),
+  //                                   ))
+  //                               .toList(),
+  //                           onChanged: (v) {
+  //                             modelId = v;
+  //                             setD(() {});
+  //                           },
+  //                         ),
+  //                         const SizedBox(height: 12),
+  //                         TextFormField(
+  //                           controller: qtyCtl,
+  //                           decoration: const InputDecoration(labelText: 'الكمية'),
+  //                           keyboardType: TextInputType.number,
+  //                           onChanged: (v) {
+  //                             qty = double.tryParse(v) ?? 0;
+  //                             setD(() {});
+  //                           },
+  //                         ),
+  //                       ],
+  //                     ),
+  //         ),
+  //         actions: [
+  //           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+  //           ElevatedButton(
+  //             onPressed: !canSave()
+  //                 ? null
+  //                 : () async {
+  //                     final body = jsonEncode({
+  //                       'warehouse_id': 1,
+  //                       'model_id': modelId,
+  //                       'quantity': qty,
+  //                     });
+  //                     final r = await http.post(
+  //                       Uri.parse('$baseUrl/warehouse/product-inventory'),
+  //                       headers: {'Content-Type': 'application/json'},
+  //                       body: body,
+  //                     );
+  //                     if (r.statusCode == 200) {
+  //                       Navigator.pop(ctx);
+  //                       await _fetchReady();
+  //                     } else {
+  //                       ScaffoldMessenger.of(context).showSnackBar(
+  //                         SnackBar(content: Text('فشل الإضافة (${r.statusCode})')),
+  //                       );
+  //                     }
+  //                   },
+  //             child: const Text('حفظ'),
+  //           ),
+  //         ],
+  //       );
+  //     }),
+  //   );
+  // }
 
   Future<void> _fetchTypes() async {
     setState(() => _loadingTypes = true);
@@ -492,33 +492,40 @@ class _DesignWarehouseSectionState extends State<DesignWarehouseSection> {
     }
   }
 
-  Future<void> _addOrEditType([Map<String, dynamic>? t]) async {
-    final isEdit = t != null;
-    final nameCtl = TextEditingController(text: t?['name'] ?? '');
-    final specsList = t == null
-        ? <Map<String, dynamic>>[]
-        : (t['specs'] as List)
-            .map((e) => {'id': e['id'], 'name': e['name']})
-            .toList();
+  // 1) Add/Edit Material Type – requires a non‑empty name and at least one spec
+Future<void> _addOrEditType([Map<String, dynamic>? t]) async {
+  final isEdit = t != null;
+  final nameCtl = TextEditingController(text: t?['name'] ?? '');
+  final specsList = t == null
+      ? <Map<String, Object?>>[{'name': ''}]
+      : List<Map<String, Object?>>.from(t['specs']
+          .map((e) => {'id': e['id'], 'name': e['name']}));
+  final _formKey = GlobalKey<FormState>();
 
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(builder: (ctx, setD) {
-        return AlertDialog(
-          title: Text(isEdit ? 'تعديل نوع' : 'إضافة نوع'),
-          content: SizedBox(
-            width: 320,
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(builder: (ctx, setD) {
+      return AlertDialog(
+        title: Text(isEdit ? 'تعديل نوع' : 'إضافة نوع'),
+        content: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(
+                // Name field
+                TextFormField(
                   controller: nameCtl,
                   decoration: const InputDecoration(labelText: 'اسم النوع'),
+                  validator: (v) =>
+                      v == null || v.trim().isEmpty ? 'اسم النوع مطلوب' : null,
                 ),
                 const SizedBox(height: 12),
+                // Specs header + add button
                 Row(
                   children: [
-                    const Text('المواصفات', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const Text('المواصفات',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
                     const Spacer(),
                     IconButton(
                       icon: const Icon(Icons.add),
@@ -526,58 +533,200 @@ class _DesignWarehouseSectionState extends State<DesignWarehouseSection> {
                     )
                   ],
                 ),
-                ...specsList.asMap().entries.map((e) {
-                  final i = e.key;
-                  return Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: TextEditingController(text: specsList[i]['name']),
-                          onChanged: (v) => specsList[i]['name'] = v,
-                          decoration: const InputDecoration(labelText: 'اسم المواصفة'),
+                // One TextFormField per spec
+                ...specsList.asMap().entries.map((entry) {
+                  final i = entry.key;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            initialValue: specsList[i]['name'] as String?,
+                            decoration:
+                                const InputDecoration(labelText: 'اسم المواصفة'),
+                            onChanged: (v) => specsList[i]['name'] = v,
+                            validator: (v) => v == null || v.trim().isEmpty
+                                ? 'أدخل اسم مواصفة'
+                                : null,
+                          ),
                         ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete),
-                        onPressed: () => setD(() => specsList.removeAt(i)),
-                      ),
-                    ],
+                        IconButton(
+                          icon: const Icon(Icons.delete),
+                          onPressed: () => setD(() => specsList.removeAt(i)),
+                        ),
+                      ],
+                    ),
                   );
                 }).toList(),
               ],
             ),
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-            ElevatedButton(
-              onPressed: () async {
-                final body = jsonEncode({
-                  'name': nameCtl.text.trim(),
-                  'specs': specsList.where((s) => (s['name'] as String).trim().isNotEmpty).toList(),
-                });
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              // first, check form fields
+              if (!_formKey.currentState!.validate()) return;
+              // then, ensure at least one spec remains
+              if (specsList.isEmpty) {
+                _snack('أضف مواصفة واحدة على الأقل', error: true);
+                return;
+              }
+              // build payload
+              final payload = {
+                'name': nameCtl.text.trim(),
+                'specs': specsList
+                    .map((s) => {'name': (s['name'] as String).trim()})
+                    .toList(),
+              };
+              // send
+              try {
                 if (isEdit) {
                   await http.put(
                     Uri.parse('$baseUrl/warehouse/material-types/${t!['id']}'),
                     headers: {'Content-Type': 'application/json'},
-                    body: body,
+                    body: jsonEncode(payload),
                   );
                 } else {
                   await http.post(
                     Uri.parse('$baseUrl/warehouse/material-types'),
                     headers: {'Content-Type': 'application/json'},
-                    body: body,
+                    body: jsonEncode(payload),
                   );
                 }
                 Navigator.pop(ctx);
                 await _fetchTypes();
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
-        );
-      }),
-    );
-  }
+                _snack('تم الحفظ');
+              } catch (e) {
+                _snack('خطأ في الحفظ: $e', error: true);
+              }
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      );
+    }),
+  );
+}
+
+// 2) Add From Models – requires you to pick a model and enter a positive qty
+Future<void> _addFromModelDialog() async {
+  int? modelId;
+  double qty = 0;
+  List<dynamic> models = [];
+  bool loading = true, firstLoad = true;
+  String? err;
+  final qtyCtl = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(builder: (ctx, setD) {
+      // lazy‐load
+      if (firstLoad) {
+        firstLoad = false;
+        http.get(Uri.parse('$baseUrl/models')).then((r) {
+          if (r.statusCode == 200) {
+            models = jsonDecode(r.body) as List;
+            err = null;
+          } else {
+            err = 'فشل تحميل (#${r.statusCode})';
+          }
+          loading = false;
+          setD(() {});
+        }).catchError((e) {
+          err = 'خطأ $e';
+          loading = false;
+          setD(() {});
+        });
+      }
+
+      return AlertDialog(
+        title: const Text('إضافة من الموديلات'),
+        content: Form(
+          key: _formKey,
+          child: SizedBox(
+            width: 420,
+            child: loading
+                ? const Center(child: CircularProgressIndicator())
+                : err != null
+                    ? Text(err!, style: const TextStyle(color: Colors.red))
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Model dropdown
+                          DropdownButtonFormField<int>(
+                            value: modelId,
+                            decoration:
+                                const InputDecoration(labelText: 'اختر الموديل'),
+                            items: models
+                                .map((m) => DropdownMenuItem<int>(
+                                      value: m['id'] as int,
+                                      child: Text(
+                                          '${m['model_name']} (#${m['id']})'),
+                                    ))
+                                .toList(),
+                            onChanged: (v) => setD(() => modelId = v),
+                            validator: (v) =>
+                                v == null ? 'اختر الموديل' : null,
+                          ),
+                          const SizedBox(height: 12),
+                          // Quantity field
+                          TextFormField(
+                            controller: qtyCtl,
+                            decoration: const InputDecoration(
+                              labelText: 'الكمية',
+                            ),
+                            keyboardType: TextInputType.number,
+                            onChanged: (v) {
+                              qty = double.tryParse(v) ?? 0;
+                            },
+                            validator: (v) {
+                              final n = double.tryParse(v ?? '') ?? 0;
+                              return n <= 0 ? 'أدخل قيمة كمية صالحة' : null;
+                            },
+                          ),
+                        ],
+                      ),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              if (!_formKey.currentState!.validate()) return;
+              final body = jsonEncode({
+                'warehouse_id': 1,
+                'model_id': modelId,
+                'quantity': qty,
+              });
+              final r = await http.post(
+                Uri.parse('$baseUrl/warehouse/product-inventory'),
+                headers: {'Content-Type': 'application/json'},
+                body: body,
+              );
+              if (r.statusCode == 200) {
+                Navigator.pop(ctx);
+                await _fetchReady();
+                _snack('تمت الإضافة');
+              } else {
+                _snack('فشل الإضافة (#${r.statusCode})', error: true);
+              }
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      );
+    }),
+  );
+}
+
 
   Future<void> _deleteType(int id) async {
     final ok = await showDialog<bool>(
@@ -604,69 +753,120 @@ class _DesignWarehouseSectionState extends State<DesignWarehouseSection> {
       }
     }
   }
+void _snack(String msg, {bool error = false}) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(msg),
+      backgroundColor: error ? Colors.red : Colors.green,
+    ),
+  );
+}
 
   Future<void> _addOrEditMaterial([Map<String, dynamic>? m]) async {
-    final isEdit = m != null;
-    final codeCtl = TextEditingController(text: m?['code'] ?? '');
-    final stockCtl = TextEditingController(text: s(m?['stock_quantity']));
-    final vals = m == null
-        ? _specs.map((s0) => {'spec_id': s0['id'], 'spec_name': s0['name'], 'value': ''}).toList()
-        : List<Map<String, dynamic>>.from(m['specs'] as List);
+  final isEdit = m != null;
+  // Controllers
+  final codeCtl = TextEditingController(text: m?['code'] ?? '');
+  // Build a list of specs; each has spec_id, spec_name, and mutable 'value'
+  final vals = m == null
+      ? _specs
+          .map((s0) => {
+                'spec_id': s0['id'],
+                'spec_name': s0['name'],
+                'value': ''
+              })
+          .toList()
+      : List<Map<String, dynamic>>.from(m['specs'] as List);
 
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(builder: (ctx, setD) {
-        return AlertDialog(
-          title: Text(isEdit ? 'تعديل مادة' : 'إضافة مادة'),
-          content: SingleChildScrollView(
+  final _formKey = GlobalKey<FormState>();
+
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(builder: (ctx, setD) {
+      return AlertDialog(
+        title: Text(isEdit ? 'تعديل مادة' : 'إضافة مادة'),
+        content: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(controller: codeCtl, decoration: const InputDecoration(labelText: 'الكود')),
-                TextField(
-                  controller: stockCtl,
-                  decoration: const InputDecoration(labelText: 'الكمية'),
-                  keyboardType: TextInputType.number,
+                // Code field
+                TextFormField(
+                  controller: codeCtl,
+                  decoration: const InputDecoration(labelText: 'الكود'),
+                  validator: (v) =>
+                      v == null || v.trim().isEmpty ? 'الكود مطلوب' : null,
                 ),
                 const SizedBox(height: 12),
-                ...vals.map((v) => TextField(
-                      controller: TextEditingController(text: v['value']),
-                      decoration: InputDecoration(labelText: v['spec_name']),
-                      onChanged: (t) => v['value'] = t,
-                    )),
+                // One TextFormField per spec
+                ...vals.asMap().entries.map((entry) {
+                  final i = entry.key;
+                  final spec = entry.value;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: TextFormField(
+                      initialValue: spec['value'] as String?,
+                      decoration:
+                          InputDecoration(labelText: spec['spec_name']),
+                      onChanged: (t) => spec['value'] = t,
+                      validator: (v) => v == null || v.trim().isEmpty
+                          ? 'الرجاء إدخال ${spec['spec_name']}'
+                          : null,
+                    ),
+                  );
+                }).toList(),
               ],
             ),
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-            ElevatedButton(
-              onPressed: () async {
-                final body = jsonEncode({
-                  'type_id': _selectedTypeId,
-                  'code': codeCtl.text,
-                  'stock_quantity': double.tryParse(stockCtl.text) ?? 0,
-                  'specs': vals.map((e) => {'spec_id': e['spec_id'], 'value': e['value']}).toList(),
-                });
-                final url = isEdit
-                    ? '$baseUrl/warehouse/materials/${m!['id']}'
-                    : '$baseUrl/warehouse/materials';
-                final r = isEdit
-                    ? await http.put(Uri.parse(url), headers: {'Content-Type': 'application/json'}, body: body)
-                    : await http.post(Uri.parse(url), headers: {'Content-Type': 'application/json'}, body: body);
-                if (r.statusCode == 200) {
-                  Navigator.pop(ctx);
-                  await _fetchMaterialsForType(_selectedTypeId!);
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ ${r.statusCode}')));
-                }
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
-        );
-      }),
-    );
-  }
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (!_formKey.currentState!.validate()) return;
+              final payload = {
+                'type_id': _selectedTypeId,
+                'code': codeCtl.text.trim(),
+                'specs': vals
+                    .map((e) => {
+                          'spec_id': e['spec_id'],
+                          'value': e['value'].toString().trim(),
+                        })
+                    .toList(),
+              };
+              final url = isEdit
+                  ? '$baseUrl/warehouse/materials/${m!['id']}'
+                  : '$baseUrl/warehouse/materials';
+              final r = isEdit
+                  ? await http.put(
+                      Uri.parse(url),
+                      headers: {'Content-Type': 'application/json'},
+                      body: jsonEncode(payload),
+                    )
+                  : await http.post(
+                      Uri.parse(url),
+                      headers: {'Content-Type': 'application/json'},
+                      body: jsonEncode(payload),
+                    );
+              if (r.statusCode == 200) {
+                Navigator.pop(ctx);
+                await _fetchMaterialsForType(_selectedTypeId!);
+                _snack('تم الحفظ');
+              } else {
+                _snack('خطأ ${r.statusCode}', error: true);
+              }
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      );
+    }),
+  );
+}
+
 
   Future<void> _deleteMaterial(int id) async {
     final ok = await showDialog<bool>(

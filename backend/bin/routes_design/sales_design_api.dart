@@ -103,8 +103,9 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
               })
           .toList();
 
+      // === items: NO more 'color' column ===
       final itemRows = await db.query("""
-        SELECT fi.id, fi.model_id, m.model_name, fi.color,
+        SELECT fi.id, fi.model_id, m.model_name,
                fi.quantity, fi.unit_price
         FROM design.facture_items fi
         JOIN design.models m ON fi.model_id = m.id
@@ -112,17 +113,15 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
       """, substitutionValues: {'id': fid});
 
       final items = itemRows.map((r) {
-        final qty  = _parseInt(r[4]);
-        final unit = _parseNum(r[5]);
+        final qty  = _parseInt(r[3]);
+        final unit = _parseNum(r[4]);
         return {
-          'id'             : r[0],
-          'model_id'       : r[1],
-          'model_name'     : r[2],
-          'color'          : r[3],
-          'quantity'       : qty,
-          'unit_price'     : unit,
-          'line_total'     : qty * unit,
-          'profit_per_piece': 0.0, // لا يوجد cost في الجدول الجديد
+          'id'         : r[0],
+          'model_id'   : r[1],
+          'model_name' : r[2],
+          'quantity'   : qty,
+          'unit_price' : unit,
+          'line_total' : qty * unit,
         };
       }).toList();
 
@@ -163,8 +162,10 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
           COALESCE(SUM(pi.quantity), 0) AS qty,
           m.price
         FROM design.models m
-        LEFT JOIN design.product_inventory pi ON pi.model_id = m.id
-        LEFT JOIN design.warehouses w ON pi.warehouse_id = w.id AND w.type = 'ready'
+        LEFT JOIN design.product_inventory pi 
+          ON pi.model_id = m.id
+        LEFT JOIN design.warehouses w 
+          ON pi.warehouse_id = w.id AND w.type = 'ready'
         GROUP BY m.id
         ORDER BY m.model_name
       """);
@@ -212,41 +213,39 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
   router.post('/factures', (Request req) async {
     try {
       final payload = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-      final int clientId                 = _parseInt(payload['client_id']);
-      final double totalAmount           = _parseNum(payload['total_amount']);
-      final double paidOnCreation        = _parseNum(payload['amount_paid_on_creation']);
-      final List<dynamic> items          = payload['items'] as List<dynamic>;
-      final String? factureDateStr       = payload['facture_date'] as String?;
-      final DateTime factureDate         = factureDateStr != null ? DateTime.parse(factureDateStr) : DateTime.now();
+      final int clientId           = _parseInt(payload['client_id']);
+      final double totalAmount     = _parseNum(payload['total_amount']);
+      final double paidOnCreation  = _parseNum(payload['amount_paid_on_creation']);
+      final List<dynamic> items    = payload['items'] as List<dynamic>;
+      final String? dateStr        = payload['facture_date'] as String?;
+      final DateTime factureDate   = dateStr != null
+          ? DateTime.parse(dateStr)
+          : DateTime.now();
 
       return await db.transaction((txn) async {
-        // 1) تحقق من المخزون
+        // 1) Check stock (no color)
         for (final it in items) {
-          final modelId   = _parseInt(it['model_id']);
-          final String? color = it['color'] as String?;
-          final int reqQty     = _parseInt(it['quantity']);
+          final modelId = _parseInt(it['model_id']);
+          final int reqQty = _parseInt(it['quantity']);
 
           final stockRes = await txn.query("""
             SELECT COALESCE(SUM(pi.quantity), 0)
             FROM design.product_inventory pi
-            JOIN design.warehouses w ON pi.warehouse_id = w.id AND w.type = 'ready'
+            JOIN design.warehouses w 
+              ON pi.warehouse_id = w.id AND w.type = 'ready'
             WHERE pi.model_id = @mid
-              ${color != null ? 'AND pi.color = @color' : ''}
-          """, substitutionValues: {
-            'mid': modelId,
-            if (color != null) 'color': color,
-          });
+          """, substitutionValues: {'mid': modelId});
 
           final available = _parseNum(stockRes.first[0]);
           if (available < reqQty) {
             return _errJson({
               'error':
-                  'Not enough stock for model $modelId${color != null ? '($color)' : ''}. Available: $available, requested: $reqQty'
+                  'Not enough stock for model $modelId. Available: $available, requested: $reqQty'
             }, code: 400);
           }
         }
 
-        // 2) إنشاء الفاتورة
+        // 2) Insert facture
         final ins = await txn.query("""
           INSERT INTO design.factures
             (client_id, facture_name, total_amount, amount_paid_on_creation, facture_date)
@@ -254,8 +253,7 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
           RETURNING id
         """, substitutionValues: {
           'cid'  : clientId,
-          // facture_name ليس لديك في الواجهة؛ ضع اسم افتراضي أو ولّد من id لاحقاً
-          'fname': 'فاتورة', 
+          'fname': 'فاتورة',
           'total': totalAmount,
           'paid' : paidOnCreation,
           'date' : factureDate,
@@ -263,39 +261,34 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
 
         final fid = ins.first[0] as int;
 
-        // 3) إضافة العناصر وخصم المخزون FIFO
+        // 3) Insert items & FIFO
         for (final it in items) {
-          final modelId   = _parseInt(it['model_id']);
-          final String? color = it['color'] as String?;
-          int remaining        = _parseInt(it['quantity']);
-          final double unit    = _parseNum(it['unit_price']);
+          final modelId  = _parseInt(it['model_id']);
+          int remaining   = _parseInt(it['quantity']);
+          final double unit = _parseNum(it['unit_price']);
 
-          // Insert item
+          // insert item (no color)
           await txn.query("""
             INSERT INTO design.facture_items
-              (facture_id, model_id, color, quantity, unit_price)
-            VALUES (@fid, @mid, @color, @qty, @unit)
+              (facture_id, model_id, quantity, unit_price)
+            VALUES (@fid, @mid, @qty, @unit)
           """, substitutionValues: {
             'fid'  : fid,
             'mid'  : modelId,
-            'color': color,
             'qty'  : remaining,
             'unit' : unit,
           });
 
-          // FIFO deduction
+          // FIFO deduction (no color)
           final invRows = await txn.query("""
             SELECT pi.id, pi.quantity
             FROM design.product_inventory pi
-            JOIN design.warehouses w ON pi.warehouse_id = w.id AND w.type = 'ready'
+            JOIN design.warehouses w 
+              ON pi.warehouse_id = w.id AND w.type = 'ready'
             WHERE pi.model_id = @mid
-              ${color != null ? 'AND pi.color = @color' : ''}
               AND pi.quantity > 0
             ORDER BY pi.last_updated ASC, pi.id ASC
-          """, substitutionValues: {
-            'mid': modelId,
-            if (color != null) 'color': color,
-          });
+          """, substitutionValues: {'mid': modelId});
 
           for (final inv in invRows) {
             if (remaining <= 0) break;
@@ -395,36 +388,35 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
       final result = <Map<String, dynamic>>[];
 
       for (final f in factRows) {
+        // fetch items without color
         final itemRows = await db.query("""
-          SELECT fi.id, fi.model_id, m.model_name, fi.color, fi.quantity, fi.unit_price
+          SELECT fi.id, fi.model_id, m.model_name, fi.quantity, fi.unit_price
           FROM design.facture_items fi
           JOIN design.models m ON fi.model_id = m.id
           WHERE fi.facture_id = @fid
         """, substitutionValues: {'fid': f[0]});
 
         final items = itemRows.map((r) {
-          final qty = _parseInt(r[4]);
-          final up  = _parseNum(r[5]);
+          final qty = _parseInt(r[3]);
+          final up  = _parseNum(r[4]);
           return {
-            'id'              : r[0],
-            'model_id'        : r[1],
-            'model_name'      : r[2],
-            'color'           : r[3],
-            'quantity'        : qty,
-            'unit_price'      : up,
-            'line_total'      : qty * up,
-            'profit_per_piece': 0.0,
+            'id'          : r[0],
+            'model_id'    : r[1],
+            'model_name'  : r[2],
+            'quantity'    : qty,
+            'unit_price'  : up,
+            'line_total'  : qty * up,
           };
         }).toList();
 
         result.add({
-          'id'                    : f[0],
-          'facture_date'          : f[1].toString(),
-          'total_amount'          : _parseNum(f[2]),
+          'id'                     : f[0],
+          'facture_date'           : f[1].toString(),
+          'total_amount'           : _parseNum(f[2]),
           'amount_paid_on_creation': _parseNum(f[3]),
-          'total_paid'            : _parseNum(f[3]) + _parseNum(f[4]),
-          'remaining_amount'      : _parseNum(f[5]),
-          'items'                 : items,
+          'total_paid'             : _parseNum(f[3]) + _parseNum(f[4]),
+          'remaining_amount'       : _parseNum(f[5]),
+          'items'                  : items,
         });
       }
 
@@ -435,84 +427,7 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
     }
   });
 
-  // ======================== CLIENT ACCOUNT / TRANSACTIONS SUMMARY ========================
-  router.get('/clients/<id|[0-9]+>/account', (Request req, String id) async {
-    try {
-      final cid = int.parse(id);
-
-      final factRows = await db.query("""
-        SELECT id, facture_date, total_amount, amount_paid_on_creation
-        FROM design.factures
-        WHERE client_id = @cid
-      """, substitutionValues: {'cid': cid});
-
-      final payRows = await db.query("""
-        SELECT fp.facture_id, fp.amount_paid, fp.payment_date
-        FROM design.facture_payments fp
-        JOIN design.factures f ON fp.facture_id = f.id
-        WHERE f.client_id = @cid
-      """, substitutionValues: {'cid': cid});
-
-      final entries = <Map<String, dynamic>>[];
-
-      for (final f in factRows) {
-        entries.add({
-          'date'      : f[1].toString(),
-          'type'      : 'facture',
-          'facture_id': f[0],
-          'label'     : 'فاتورة',
-          'amount'    : _parseNum(f[2]), // موجب
-        });
-        final pay0 = _parseNum(f[3]);
-        if (pay0 > 0) {
-          entries.add({
-            'date'      : f[1].toString(),
-            'type'      : 'pay_on_creation',
-            'facture_id': f[0],
-            'label'     : 'دفعة عند الإنشاء',
-            'amount'    : -pay0, // سالب
-          });
-        }
-      }
-
-      for (final p in payRows) {
-        entries.add({
-          'date'      : p[2].toString(),
-          'type'      : 'payment',
-          'facture_id': p[0],
-          'label'     : 'دفعة على الفاتورة',
-          'amount'    : -_parseNum(p[1]),
-        });
-      }
-
-      entries.sort((a, b) {
-        final d1 = DateTime.parse(a['date']);
-        final d2 = DateTime.parse(b['date']);
-        final cmp = d1.compareTo(d2);
-        if (cmp != 0) return cmp;
-        return _parseInt(a['facture_id']).compareTo(_parseInt(b['facture_id']));
-      });
-
-      final totalFact = factRows.fold<double>(0, (s, f) => s + _parseNum(f[2]));
-      final totalPaid = factRows.fold<double>(0, (s, f) => s + _parseNum(f[3])) +
-          payRows.fold<double>(0, (s, p) => s + _parseNum(p[1]));
-      final remaining = totalFact - totalPaid;
-
-      return _okJson({
-        'entries': entries,
-        'summary': {
-          'total'    : totalFact,
-          'paid'     : totalPaid,
-          'remaining': remaining,
-        }
-      });
-    } catch (e, st) {
-      print('client account error: $e\n$st');
-      return _errJson({'error': 'Failed to fetch client account', 'details': e.toString()});
-    }
-  });
-
-  // ======================== CLIENT TRANSACTIONS (OPTIONAL DATE RANGE) ========================
+  // ======================== CLIENT ACCOUNT / TRANSACTIONS ========================
   router.get('/clients/<id|[0-9]+>/transactions', (Request req, String id) async {
     try {
       final cid = int.parse(id);
@@ -607,14 +522,14 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
       """, substitutionValues: {'mid': mid});
 
       final list = rows.map((r) => {
-            'client_id'    : _parseInt(r[0]),
-            'client_name'  : r[1],
-            'client_phone' : r[2],
+            'client_id'     : _parseInt(r[0]),
+            'client_name'   : r[1],
+            'client_phone'  : r[2],
             'client_address': r[3],
-            'facture_id'   : _parseInt(r[4]),
-            'facture_date' : r[5].toString(),
-            'quantity'     : _parseInt(r[6]),
-            'unit_price'   : _parseNum(r[7]),
+            'facture_id'    : _parseInt(r[4]),
+            'facture_date'  : r[5].toString(),
+            'quantity'      : _parseInt(r[6]),
+            'unit_price'    : _parseNum(r[7]),
           }).toList();
 
       return _okJson(list);
@@ -664,9 +579,9 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
       final list = rows
           .map((r) => {
                 'id'       : _parseInt(r[0]),
-                'full_name': r[1],
-                'phone'    : r[2],
-                'address'  : r[3],
+                'full_name': r[1] as String,
+                'phone'    : r[2] as String?,
+                'address'  : r[3] as String?,
               })
           .toList();
 
@@ -724,20 +639,19 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
         ORDER BY f.id DESC
       """, substitutionValues: {'sid': int.parse(sid)});
 
-      final list = rows
-          .map((r) {
-            final total = _parseNum(r[4]);
-            final paid  = _parseNum(r[5]);
-            return {
-              'id'              : _parseInt(r[0]),
-              'client_id'       : _parseInt(r[1]),
-              'client_name'     : r[2],
-              'facture_date'    : r[3].toString(),
-              'total_amount'    : total,
-              'total_paid'      : paid,
-              'remaining_amount': total - paid,
-            };
-          }).toList();
+      final list = rows.map((r) {
+        final total = _parseNum(r[4]);
+        final paid  = _parseNum(r[5]);
+        return {
+          'id'              : _parseInt(r[0]),
+          'client_id'       : _parseInt(r[1]),
+          'client_name'     : r[2],
+          'facture_date'    : r[3].toString(),
+          'total_amount'    : total,
+          'total_paid'      : paid,
+          'remaining_amount': total - paid,
+        };
+      }).toList();
 
       return _okJson(list);
     } catch (e, st) {
@@ -749,7 +663,6 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
   // ======================== FACTURES SUMMARY ========================
   router.get('/factures/summary', (Request req) async {
     try {
-      // لا يوجد global_price أو ربح واضح في DB الجديدة، لذا نضع الربح = 0
       final rows = await db.query("""
         SELECT 
           COUNT(*)                             AS total_factures,
@@ -769,7 +682,6 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
         'total_factures' : _parseInt(r[0]),
         'total_income'   : _parseNum(r[1]),
         'total_remaining': _parseNum(r[2]),
-        'total_profit'   : 0.0, // placeholder
       };
 
       return _okJson(summary);

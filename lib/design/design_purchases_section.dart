@@ -201,305 +201,293 @@ class _DesignPurchasesSectionState extends State<DesignPurchasesSection> {
 
   // ==================== DIALOGS ====================
   Future<void> _showPurchaseDialog({Map<String, dynamic>? initial}) async {
-    await Future.wait([
-      _fetchMaterials(),
-      _fetchMaterialTypes(),
-      _fetchSuppliers(),
-    ]);
+  await Future.wait([
+    _fetchMaterials(),
+    _fetchMaterialTypes(),
+    _fetchSuppliers(),
+  ]);
 
-    DateTime purchaseDate = initial != null && initial['purchase_date'] != null
-        ? DateTime.parse(initial['purchase_date'])
-        : DateTime.now();
+  final _formKey = GlobalKey<FormState>();
+  DateTime purchaseDate = initial != null && initial['purchase_date'] != null
+      ? DateTime.parse(initial['purchase_date'])
+      : DateTime.now();
 
-    int? selectedSupplierId = initial?['supplier_id'] as int?;
-    List<Map<String, dynamic>> items = initial == null
-        ? []
-        : List<Map<String, dynamic>>.from(initial['items']);
+  int? selectedSupplierId = initial?['supplier_id'] as int?;
+  List<Map<String, dynamic>> items = initial == null
+      ? []
+      : List<Map<String, dynamic>>.from(initial['items']);
 
-    double _totalAmount() {
-      return items.fold<double>(0.0, (sum, it) {
-        final q = _toDouble(it['quantity']) ?? 0.0;
-        final p = _toDouble(it['unit_price']) ?? 0.0;
-        return sum + q * p;
-      });
-    }
-
-    double amountPaidOnCreation = _toDouble(initial?['amount_paid_on_creation']) ?? 0.0;
-    final TextEditingController amountCtl =
-        TextEditingController(text: amountPaidOnCreation.toStringAsFixed(2));
-    String paymentType =
-        amountPaidOnCreation >= _totalAmount() && _totalAmount() > 0 ? 'cash' : 'debt';
-
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setD) {
-          void updatePayment(String v) {
-            setD(() {
-              paymentType = v;
-              if (v == 'cash') {
-                amountPaidOnCreation = _totalAmount();
-                amountCtl.text = amountPaidOnCreation.toStringAsFixed(2);
-              } else {
-                amountPaidOnCreation = 0.0;
-                amountCtl.text = '0.00';
-              }
-            });
-          }
-
-          return AlertDialog(
-            title: Text(initial == null ? 'إضافة شراء جديد' : 'تعديل الشراء'),
-            content: SingleChildScrollView(
-              child: SizedBox(
-                width: 520,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Basic info
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('المعلومات الأساسية',
-                                style: TextStyle(fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                const Text('التاريخ:'),
-                                const SizedBox(width: 8),
-                                Text('${purchaseDate.toLocal()}'.split(' ')[0]),
-                                const Spacer(),
-                                ElevatedButton(
-                                  onPressed: () async {
-                                    final picked = await showDatePicker(
-                                      context: ctx,
-                                      initialDate: purchaseDate,
-                                      firstDate: DateTime(2020),
-                                      lastDate: DateTime(2100),
-                                    );
-                                    if (picked != null) setD(() => purchaseDate = picked);
-                                  },
-                                  child: const Text('تغيير التاريخ'),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            DropdownButtonFormField<int>(
-                              value: selectedSupplierId,
-                              decoration: const InputDecoration(labelText: 'اختر المورد'),
-                              items: _suppliers
-                                  .map<DropdownMenuItem<int>>(
-                                      (s) => DropdownMenuItem<int>(
-                                            value: s['id'] as int,
-                                            child: Text(s['name'] as String),
-                                          ))
-                                  .toList(),
-                              onChanged: (v) => setD(() => selectedSupplierId = v),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Items
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Text('المواد المضافة',
-                                    style:
-                                        TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                Text('الإجمالي: ${_totalAmount().toStringAsFixed(2)} دج',
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold, color: Colors.green)),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            if (items.isNotEmpty)
-                              ...items.asMap().entries.map((e) {
-                                final idx = e.key;
-                                final item = e.value;
-                                final material = _materials.firstWhere(
-                                  (m) => m['id'] == item['material_id'],
-                                  orElse: () => {'code': 'غير محدد', 'type_name': ''},
-                                );
-                                final subtotal = (_toDouble(item['quantity']) ?? 0.0) *
-                                    (_toDouble(item['unit_price']) ?? 0.0);
-
-                                return Card(
-                                  color: Colors.grey[50],
-                                  child: ListTile(
-                                    title: Text(
-                                        '${material['code']} (${material['type_name'] ?? ''})'),
-                                    subtitle: Text(
-                                        'الكمية: ${item['quantity']} × ${item['unit_price']} = ${subtotal.toStringAsFixed(2)} دج'),
-                                    trailing: IconButton(
-                                      icon: const Icon(Icons.delete, color: Colors.red),
-                                      onPressed: () => setD(() => items.removeAt(idx)),
-                                    ),
-                                  ),
-                                );
-                              }),
-                            const SizedBox(height: 12),
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: ElevatedButton.icon(
-                                icon: const Icon(Icons.add),
-                                label: const Text('إضافة مادة'),
-                                onPressed: () =>
-                                    _showAddMaterialDialog(setD, items),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Payment
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('طريقة الدفع',
-                                style: TextStyle(fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 8),
-                            ListTile(
-                              title: const Text('شراء بالدين'),
-                              leading: Radio<String>(
-                                value: 'debt',
-                                groupValue: paymentType,
-                                onChanged: (v) => updatePayment(v!),
-                              ),
-                            ),
-                            ListTile(
-                              title: const Text('شراء نقدي'),
-                              leading: Radio<String>(
-                                value: 'cash',
-                                groupValue: paymentType,
-                                onChanged: (v) => updatePayment(v!),
-                              ),
-                            ),
-                            if (paymentType == 'cash' && items.isNotEmpty)
-                              TextField(
-                                controller: amountCtl,
-                                decoration: InputDecoration(
-                                  labelText:
-                                      'دفعة أولى (الحد الأقصى: ${_totalAmount().toStringAsFixed(2)})',
-                                ),
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(decimal: true),
-                                onChanged: (v) {
-                                  final amt = double.tryParse(v) ?? 0.0;
-                                  final total = _totalAmount();
-                                  if (amt > total) {
-                                    amountCtl.text = total.toStringAsFixed(2);
-                                  }
-                                  amountPaidOnCreation =
-                                      double.tryParse(amountCtl.text) ?? 0.0;
-                                },
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-              ElevatedButton(
-                onPressed: () async {
-                  // validations
-                  if (selectedSupplierId == null) {
-                    _snack('يرجى اختيار المورد', err: true);
-                    return;
-                  }
-                  if (items.isEmpty) {
-                    _snack('يرجى إضافة مادة واحدة على الأقل', err: true);
-                    return;
-                  }
-                  final total = _totalAmount();
-                  if (total <= 0) {
-                    _snack('الإجمالي يجب أن يكون > 0', err: true);
-                    return;
-                  }
-                  if (paymentType == 'cash' && amountPaidOnCreation > total) {
-                    _snack('الدفعة الأولى أكبر من الإجمالي', err: true);
-                    return;
-                  }
-
-                  final body = jsonEncode({
-                    'purchase_date': purchaseDate.toIso8601String(),
-                    'supplier_id': selectedSupplierId,
-                    'amount_paid_on_creation':
-                        paymentType == 'cash' ? amountPaidOnCreation : 0.0,
-                    'items': items,
-                  });
-
-                  try {
-                    if (initial == null) {
-                      final res = await http.post(Uri.parse(_baseUrl),
-                          headers: {'Content-Type': 'application/json'}, body: body);
-                      if (res.statusCode != 200 && res.statusCode != 201) {
-                        throw Exception('${res.statusCode} ${res.body}');
-                      }
-                      _snack('تمت الإضافة');
-                    } else {
-                      final id = initial['id'];
-                      final r1 = await http.put(Uri.parse('$_baseUrl/$id'),
-                          headers: {'Content-Type': 'application/json'}, body: body);
-                      if (r1.statusCode != 200) throw Exception(r1.body);
-
-                      final r2 = await http.post(Uri.parse('$_baseUrl/$id/items'),
-                          headers: {'Content-Type': 'application/json'},
-                          body: jsonEncode({'items': items}));
-                      if (r2.statusCode != 200) throw Exception(r2.body);
-
-                      _snack('تم التحديث');
-                    }
-                    if (mounted) Navigator.pop(ctx);
-                    await _fetchAll();
-                  } catch (e) {
-                    _snack('خطأ في الحفظ: $e', err: true);
-                  }
-                },
-                child: const Text('حفظ'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
+  double _computeTotal() {
+    return items.fold<double>(0.0, (sum, it) {
+      final q = _toDouble(it['quantity']) ?? 0.0;
+      final p = _toDouble(it['unit_price']) ?? 0.0;
+      return sum + q * p;
+    });
   }
 
-  void _showAddMaterialDialog(StateSetter setDialogState, List<Map<String, dynamic>> items) {
-    int? typeId;
-    int? materialId;
-    List<dynamic> filteredMaterials = [];
-    double qty = 0.0;
-    double up = 0.0;
+  double amountPaidOnCreation =
+      _toDouble(initial?['amount_paid_on_creation']) ?? 0.0;
+  final amountCtl = TextEditingController(
+      text: amountPaidOnCreation.toStringAsFixed(2));
+  String paymentType = (amountPaidOnCreation >= _computeTotal() && _computeTotal() > 0)
+      ? 'cash'
+      : 'debt';
 
-    final qtyCtl = TextEditingController();
-    final priceCtl = TextEditingController();
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(builder: (ctx, setD) {
+      void updatePayment(String v) {
+        setD(() {
+          paymentType = v;
+          if (v == 'cash') {
+            final tot = _computeTotal();
+            amountPaidOnCreation = tot;
+            amountCtl.text = tot.toStringAsFixed(2);
+          } else {
+            amountPaidOnCreation = 0.0;
+            amountCtl.text = '0.00';
+          }
+        });
+      }
 
-    showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setD) => AlertDialog(
-          title: const Text('إضافة مادة'),
-          content: SizedBox(
+      Future<void> pickDate() async {
+        final picked = await showDatePicker(
+          context: ctx,
+          initialDate: purchaseDate,
+          firstDate: DateTime(2000),
+          lastDate: DateTime(2100),
+          locale: const Locale('ar', 'AR'), // Arabic
+        );
+        if (picked != null) setD(() => purchaseDate = picked);
+      }
+
+      return AlertDialog(
+        title: Text(initial == null ? 'إضافة شراء جديد' : 'تعديل الشراء'),
+        content: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Date picker
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      'التاريخ: ${purchaseDate.toLocal().toString().split(' ')[0]}',
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.calendar_today),
+                      onPressed: pickDate,
+                    ),
+                  ),
+
+                  // Supplier dropdown
+                  DropdownButtonFormField<int>(
+                    value: selectedSupplierId,
+                    decoration: const InputDecoration(labelText: 'اختر المورد'),
+                    items: _suppliers
+                        .map((s) => DropdownMenuItem<int>(
+                              value: s['id'] as int,
+                              child: Text(s['name'] as String),
+                            ))
+                        .toList(),
+                    onChanged: (v) => setD(() => selectedSupplierId = v),
+                    validator: (v) => v == null ? 'المورد مطلوب' : null,
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Items header & total
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('المواد المضافة',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16)),
+                      Text(
+                        'الإجمالي: ${_computeTotal().toStringAsFixed(2)} دج',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, color: Colors.green),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Item list
+                  if (items.isNotEmpty)
+                    ...items.asMap().entries.map((e) {
+                      final idx = e.key;
+                      final item = e.value;
+                      final mat = _materials.firstWhere(
+                        (m) => m['id'] == item['material_id'],
+                        orElse: () => {'code': 'غير محدد', 'type_name': ''},
+                      );
+                      final sub = (_toDouble(item['quantity']) ?? 0.0) *
+                          (_toDouble(item['unit_price']) ?? 0.0);
+                      return Card(
+                        color: Colors.grey[50],
+                        child: ListTile(
+                          title: Text(
+                            '${mat['code']} (${mat['type_name'] ?? ''})',
+                          ),
+                          subtitle: Text(
+                            'الكمية: ${item['quantity']} × ${item['unit_price']} = ${sub.toStringAsFixed(2)} دج',
+                          ),
+                          trailing: IconButton(
+                            icon:
+                                const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () => setD(() => items.removeAt(idx)),
+                          ),
+                        ),
+                      );
+                    }),
+
+                  // Add material button
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.add),
+                      label: const Text('إضافة مادة'),
+                      onPressed: () => _showAddMaterialDialog(setD, items),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Payment type
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('طريقة الدفع',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                  RadioListTile<String>(
+                    title: const Text('دين'),
+                    value: 'debt',
+                    groupValue: paymentType,
+                    onChanged: (v) => updatePayment(v!),
+                  ),
+                  RadioListTile<String>(
+                    title: const Text('نقدي'),
+                    value: 'cash',
+                    groupValue: paymentType,
+                    onChanged: (v) => updatePayment(v!),
+                  ),
+
+                  // Amount paid field
+                  if (paymentType == 'cash')
+                    TextFormField(
+                      controller: amountCtl,
+                      decoration: InputDecoration(
+                        labelText:
+                          'دفعة أولى (≤ ${_computeTotal().toStringAsFixed(2)})',
+                      ),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      validator: (v) {
+                        final val = double.tryParse(v ?? '');
+                        if (val == null || val < 0) return 'مبلغ غير صالح';
+                        if (val > _computeTotal()) return 'أكبر من الإجمالي';
+                        return null;
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              // 1) Form validation
+              if (!_formKey.currentState!.validate()) return;
+              // 2) Business checks
+              if (items.isEmpty) {
+                _snack('أضف مادة واحدة على الأقل', err: true);
+                return;
+              }
+              final total = _computeTotal();
+              if (total <= 0) {
+                _snack('الإجمالي يجب أن يكون > 0', err: true);
+                return;
+              }
+              // Build payload
+              final body = jsonEncode({
+                'purchase_date': purchaseDate.toIso8601String(),
+                'supplier_id': selectedSupplierId,
+                'amount_paid_on_creation':
+                  paymentType == 'cash'
+                    ? double.parse(amountCtl.text)
+                    : 0.0,
+                'items': items,
+              });
+              try {
+                if (initial == null) {
+                  final res = await http.post(
+                    Uri.parse(_baseUrl),
+                    headers: {'Content-Type': 'application/json'},
+                    body: body,
+                  );
+                  if (res.statusCode != 200 && res.statusCode != 201)
+                    throw Exception('${res.statusCode}');
+                  _snack('تمت الإضافة');
+                } else {
+                  final id = initial['id'];
+                  final r1 = await http.put(
+                    Uri.parse('$_baseUrl/$id'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: body,
+                  );
+                  if (r1.statusCode != 200) throw Exception(r1.body);
+                  final r2 = await http.post(
+                    Uri.parse('$_baseUrl/$id/items'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode({'items': items}),
+                  );
+                  if (r2.statusCode != 200) throw Exception(r2.body);
+                  _snack('تم التحديث');
+                }
+                Navigator.pop(ctx);
+                await _fetchAll();
+              } catch (e) {
+                _snack('خطأ في الحفظ: $e', err: true);
+              }
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      );
+    }),
+  );
+}
+
+void _showAddMaterialDialog(
+    StateSetter setDialogState, List<Map<String, dynamic>> items) {
+  final _matFormKey = GlobalKey<FormState>();
+  int? typeId;
+  int? materialId;
+  List<dynamic> filteredMaterials = [];
+  final qtyCtl = TextEditingController();
+  final priceCtl = TextEditingController();
+
+  showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(builder: (ctx, setD) {
+      Future<void> onTypeChange(int? v) async {
+        typeId = v;
+        filteredMaterials = v == null ? [] : await _fetchMaterialsByType(v);
+        materialId = null;
+        setD(() {});
+      }
+
+      return AlertDialog(
+        title: const Text('إضافة مادة'),
+        content: Form(
+          key: _matFormKey,
+          child: SizedBox(
             width: 420,
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -508,64 +496,74 @@ class _DesignPurchasesSectionState extends State<DesignPurchasesSection> {
                   value: typeId,
                   decoration: const InputDecoration(labelText: 'نوع المادة'),
                   items: _materialTypes
-                      .map<DropdownMenuItem<int>>(
-                          (t) => DropdownMenuItem(value: t['id'] as int, child: Text(t['name'])))
+                      .map((t) => DropdownMenuItem<int>(
+                            value: t['id'] as int,
+                            child: Text(t['name'] as String),
+                          ))
                       .toList(),
-                  onChanged: (v) async {
-                    typeId = v;
-                    filteredMaterials = await _fetchMaterialsByType(v!);
-                    setD(() => materialId = null);
-                  },
+                  onChanged: onTypeChange,
+                  validator: (v) => v == null ? 'نوع المادة مطلوب' : null,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
                   value: materialId,
                   decoration: const InputDecoration(labelText: 'المادة'),
                   items: filteredMaterials
-                      .map<DropdownMenuItem<int>>((m) =>
-                          DropdownMenuItem(value: m['id'] as int, child: Text(m['code'] as String)))
+                      .map((m) => DropdownMenuItem<int>(
+                            value: m['id'] as int,
+                            child: Text(m['code'] as String),
+                          ))
                       .toList(),
                   onChanged: (v) => setD(() => materialId = v),
+                  validator: (v) => v == null ? 'اختر المادة' : null,
                 ),
-                const SizedBox(height: 16),
-                TextField(
+                const SizedBox(height: 12),
+                TextFormField(
                   controller: qtyCtl,
                   decoration: const InputDecoration(labelText: 'الكمية'),
                   keyboardType: TextInputType.number,
-                  onChanged: (v) => qty = double.tryParse(v) ?? 0.0,
+                  validator: (v) {
+                    final n = double.tryParse(v ?? '');
+                    if (n == null || n <= 0) return 'كمية>0 مطلوبة';
+                    return null;
+                  },
                 ),
-                const SizedBox(height: 16),
-                TextField(
+                const SizedBox(height: 12),
+                TextFormField(
                   controller: priceCtl,
                   decoration: const InputDecoration(labelText: 'سعر الوحدة'),
                   keyboardType: TextInputType.number,
-                  onChanged: (v) => up = double.tryParse(v) ?? 0.0,
+                  validator: (v) {
+                    final n = double.tryParse(v ?? '');
+                    if (n == null || n <= 0) return 'سعر>0 مطلوب';
+                    return null;
+                  },
                 ),
               ],
             ),
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-            ElevatedButton(
-              onPressed: () {
-                if (materialId != null && qty > 0 && up > 0) {
-                  setDialogState(() => items.add({
-                        'material_id': materialId,
-                        'quantity': qty,
-                        'unit_price': up,
-                      }));
-                  Navigator.pop(ctx);
-                } else {
-                  _snack('املأ الحقول بقيم صحيحة', err: true);
-                }
-              },
-              child: const Text('إضافة'),
-            ),
-          ],
         ),
-      ),
-    );
-  }
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () {
+              if (!_matFormKey.currentState!.validate()) return;
+              final q = double.parse(qtyCtl.text);
+              final u = double.parse(priceCtl.text);
+              setDialogState(() => items.add({
+                    'material_id': materialId,
+                    'quantity': q,
+                    'unit_price': u,
+                  }));
+              Navigator.pop(ctx);
+            },
+            child: const Text('إضافة'),
+          ),
+        ],
+      );
+    }),
+  );
+}
 
   // ==================== BUILD ====================
   @override

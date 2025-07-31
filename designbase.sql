@@ -336,3 +336,55 @@ ALTER TABLE design.expenses
 ALTER TABLE design.expenses
   ADD CONSTRAINT expenses_expense_type_check
   CHECK (expense_type IN ('electricity','rent','water','maintenance','custom','raw_materials'));
+
+
+
+
+-- Set the search path to the design schema
+SET search_path TO design;
+
+-- Truncate all tables except for the warehouses table
+TRUNCATE TABLE
+  clients,
+  suppliers,
+  material_types,
+  material_specs,
+  materials,
+  material_spec_values,
+  raw_inventory,
+  models,
+  model_colors,
+  product_inventory,
+  purchases,
+  purchase_items,
+  purchase_payments,
+  factures,
+  facture_items,
+  facture_payments,
+  seasons,
+  season_reports,
+  expenses,
+  returns
+CASCADE;
+
+-- Reset the IDs for the truncated tables to start from 1
+ALTER SEQUENCE clients_id_seq RESTART WITH 1;
+ALTER SEQUENCE suppliers_id_seq RESTART WITH 1;
+ALTER SEQUENCE material_types_id_seq RESTART WITH 1;
+ALTER SEQUENCE material_specs_id_seq RESTART WITH 1;
+ALTER SEQUENCE materials_id_seq RESTART WITH 1;
+ALTER SEQUENCE material_spec_values_id_seq RESTART WITH 1;
+ALTER SEQUENCE raw_inventory_id_seq RESTART WITH 1;
+ALTER SEQUENCE models_id_seq RESTART WITH 1;
+ALTER SEQUENCE model_colors_id_seq RESTART WITH 1;
+ALTER SEQUENCE product_inventory_id_seq RESTART WITH 1;
+ALTER SEQUENCE purchases_id_seq RESTART WITH 1;
+ALTER SEQUENCE purchase_items_id_seq RESTART WITH 1;
+ALTER SEQUENCE purchase_payments_id_seq RESTART WITH 1;
+ALTER SEQUENCE factures_id_seq RESTART WITH 1;
+ALTER SEQUENCE facture_items_id_seq RESTART WITH 1;
+ALTER SEQUENCE facture_payments_id_seq RESTART WITH 1;
+ALTER SEQUENCE seasons_id_seq RESTART WITH 1;
+ALTER SEQUENCE season_reports_id_seq RESTART WITH 1;
+ALTER SEQUENCE expenses_id_seq RESTART WITH 1;
+ALTER SEQUENCE returns_id_seq RESTART WITH 1;

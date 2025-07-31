@@ -1,3 +1,5 @@
+// lib/design_suppliers_section.dart
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -59,6 +61,7 @@ class _DesignSuppliersSectionState extends State<DesignSuppliersSection> {
 
   Future<void> _showSupplierDialog({Map<String, dynamic>? existing}) async {
     final isEdit = existing != null;
+    final _formKey = GlobalKey<FormState>();
     final nameCtrl  = TextEditingController(text: existing?['full_name'] ?? '');
     final phoneCtrl = TextEditingController(text: existing?['phone'] ?? '');
     final addrCtrl  = TextEditingController(text: existing?['address'] ?? '');
@@ -68,33 +71,78 @@ class _DesignSuppliersSectionState extends State<DesignSuppliersSection> {
       context: context,
       builder: (_) => AlertDialog(
         title: Text(isEdit ? 'تعديل مورد' : 'إضافة مورد'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nameCtrl,  decoration: const InputDecoration(labelText: 'الاسم الكامل')),
-              const SizedBox(height: 8),
-              TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'رقم الهاتف'), keyboardType: TextInputType.phone),
-              const SizedBox(height: 8),
-              TextField(controller: addrCtrl,  decoration: const InputDecoration(labelText: 'العنوان')),
-              const SizedBox(height: 8),
-              TextField(controller: compCtrl,  decoration: const InputDecoration(labelText: 'اسم الشركة (اختياري)')),
-            ],
+        content: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(labelText: 'الاسم الكامل'),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) {
+                      return 'الاسم مطلوب';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: phoneCtrl,
+                  decoration: const InputDecoration(labelText: 'رقم الهاتف'),
+                  keyboardType: TextInputType.phone,
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) {
+                      return 'رقم الهاتف مطلوب';
+                    }
+                    // بضعة تحققات بسيطة:
+                    if (!RegExp(r'^\+?\d{8,15}$').hasMatch(v.trim())) {
+                      return 'رقم غير صالح';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: addrCtrl,
+                  decoration: const InputDecoration(labelText: 'العنوان'),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) {
+                      return 'العنوان مطلوب';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: compCtrl,
+                  decoration:
+                      const InputDecoration(labelText: 'اسم الشركة (اختياري)'),
+                ),
+              ],
+            ),
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.primary,
               foregroundColor: Colors.white,
             ),
             onPressed: () async {
+              if (!_formKey.currentState!.validate()) return;
+
               final payload = {
                 'full_name': nameCtrl.text.trim(),
                 'phone': phoneCtrl.text.trim(),
                 'address': addrCtrl.text.trim(),
-                'company_name': compCtrl.text.trim().isEmpty ? null : compCtrl.text.trim(),
+                'company_name':
+                    compCtrl.text.trim().isEmpty ? null : compCtrl.text.trim(),
               };
               try {
                 http.Response res;
@@ -134,9 +182,13 @@ class _DesignSuppliersSectionState extends State<DesignSuppliersSection> {
         title: const Text('حذف مورد'),
         content: const Text('هل أنت متأكد من حذف هذا المورد؟'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red, foregroundColor: Colors.white),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('حذف'),
           ),
@@ -157,7 +209,10 @@ class _DesignSuppliersSectionState extends State<DesignSuppliersSection> {
 
   void _showSnack(String msg, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: isError ? Colors.red : Colors.green),
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: isError ? Colors.red : Colors.green,
+      ),
     );
   }
 
@@ -229,7 +284,8 @@ class _DesignSuppliersSectionState extends State<DesignSuppliersSection> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.secondary),
+                        icon: Icon(Icons.edit,
+                            color: Theme.of(context).colorScheme.secondary),
                         onPressed: () => _showSupplierDialog(existing: s),
                       ),
                       IconButton(

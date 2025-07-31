@@ -426,8 +426,8 @@ class _DesignModelsSectionState extends State<DesignModelsSection> {
                                         selectedModel['placed'] ?? '-'),
                                     _specCard('المقاسات/الكميات',
                                         selectedModel['sizes_text'] ?? '-'),
-                                    _specCard('السعر',
-                                        '${(selectedModel['price'] as num?)?.toStringAsFixed(2) ?? '0.00'} دج'),
+                                    // _specCard('السعر',
+                                    //     '${(selectedModel['price'] as num?)?.toStringAsFixed(2) ?? '0.00'} دج'),
                                   ],
                                 ),
                               ],
@@ -508,216 +508,219 @@ class _DesignModelsSectionState extends State<DesignModelsSection> {
   }
 
 Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
-    final isEdit = m != null;
+  final isEdit = m != null;
 
-    int? clientId = m?['client_id'];
-    int? seasonId = m?['season_id'];
+  int? clientId  = m?['client_id'];
+  int? seasonId  = m?['season_id'];
+  DateTime? modelDate = m != null
+      ? DateTime.tryParse(m['model_date'] ?? '')
+      : DateTime.now();
 
-    final modelNameCtl = TextEditingController(text: m?['model_name'] ?? '');
-    final markerCtl = TextEditingController(text: m?['marker_name'] ?? '');
-    final lengthCtl = TextEditingController(text: (m?['length'] ?? '').toString());
-    final widthCtl = TextEditingController(text: (m?['width'] ?? '').toString());
-    final utilCtl = TextEditingController(
-        text: m == null ? '' : ((m['util_percent'] ?? 0).toString() + '%'));
-    final placedCtl = TextEditingController(text: m?['placed'] ?? '');
-    final sizesCtl = TextEditingController(text: m?['sizes_text'] ?? '');
-    final priceCtl = TextEditingController(text: (m?['price'] ?? '').toString());
-    final descCtl = TextEditingController(text: m?['description'] ?? '');
-    final imageCtl = TextEditingController(text: m?['image_url'] ?? '');
+  // Controllers for text fields
+  final modelNameCtl = TextEditingController(text: m?['model_name'] ?? '');
+  final markerCtl    = TextEditingController(text: m?['marker_name'] ?? '');
+  final lengthCtl    = TextEditingController(text: (m?['length'] ?? '').toString());
+  final widthCtl     = TextEditingController(text: (m?['width'] ?? '').toString());
+  final utilCtl      = TextEditingController(text: (m?['util_percent'] ?? '').toString());
+  final placedCtl    = TextEditingController(text: m?['placed'] ?? '');
+  final descCtl      = TextEditingController(text: m?['description'] ?? '');
 
-    DateTime? modelDate = m != null
-        ? DateTime.tryParse(m['model_date'] ?? '')
-        : DateTime.now();
+  final _formKey = GlobalKey<FormState>();
 
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setD) {
-          Future<void> pickDate() async {
-            final p = await showDatePicker(
-              context: ctx,
-              initialDate: modelDate ?? DateTime.now(),
-              firstDate: DateTime(2000),
-              lastDate: DateTime(2100),
-            );
-            if (p != null) setD(() => modelDate = p);
-          }
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (ctx, setD) {
+        Future<void> pickDate() async {
+          final p = await showDatePicker(
+            context: ctx,
+            initialDate: modelDate ?? DateTime.now(),
+            firstDate: DateTime(2000),
+            lastDate: DateTime(2100),
+            locale: const Locale('ar'),
+          );
+          if (p != null) setD(() => modelDate = p);
+        }
 
-          return AlertDialog(
-            title: Text(isEdit ? 'تعديل موديل' : 'إضافة موديل'),
-            content: SizedBox(
-              width: 520,
+        return AlertDialog(
+          title: Text(isEdit ? 'تعديل موديل' : 'إضافة موديل'),
+          content: SizedBox(
+            width: 520,
+            child: Form(
+              key: _formKey,
               child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DropdownButtonFormField<int>(
-                      value: clientId,
-                      decoration: const InputDecoration(labelText: 'العميل'),
-                      items: _clients
-                          .map((c) => DropdownMenuItem<int>(
-                                value: c['id'] as int,
-                                child: Text(c['full_name']),
-                              ))
-                          .toList(),
-                      onChanged: (v) => setD(() => clientId = v),
-                    ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<int>(
-                      value: seasonId,
-                      decoration: const InputDecoration(labelText: 'الموسم'),
-                      items: _seasons
-                          .map((s) => DropdownMenuItem<int>(
-                                value: s['id'] as int,
-                                child: Text(s['name']),
-                              ))
-                          .toList(),
-                      onChanged: (v) => setD(() => seasonId = v),
-                    ),
-                    const SizedBox(height: 8),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        modelDate == null
-                            ? 'تاريخ الموديل'
-                            : 'تاريخ: ${_fmtDate(modelDate!.toIso8601String())}',
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  // Client
+                  DropdownButtonFormField<int>(
+                    value: clientId,
+                    decoration: const InputDecoration(labelText: 'العميل'),
+                    items: _clients.map((c) {
+                      return DropdownMenuItem(
+                        value: c['id'] as int,
+                        child: Text(c['full_name']),
+                      );
+                    }).toList(),
+                    onChanged: (v) => setD(() => clientId = v),
+                    validator: (_) =>
+                        clientId == null ? 'الرجاء اختيار العميل' : null,
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Season (optional)
+                  DropdownButtonFormField<int>(
+                    value: seasonId,
+                    decoration: const InputDecoration(labelText: 'الموسم'),
+                    items: _seasons.map((s) {
+                      return DropdownMenuItem(
+                        value: s['id'] as int,
+                        child: Text(s['name']),
+                      );
+                    }).toList(),
+                    onChanged: (v) => setD(() => seasonId = v),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Date picker
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(modelDate == null
+                        ? 'اختر تاريخ الموديل'
+                        : 'تاريخ: ${_fmtDate(modelDate!.toIso8601String())}'),
+                    trailing: const Icon(Icons.calendar_today),
+                    onTap: pickDate,
+                  ),
+                  if (modelDate == null)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 12),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'الرجاء اختيار التاريخ',
+                          style: TextStyle(color: Colors.red[700], fontSize: 12),
+                        ),
                       ),
-                      trailing: const Icon(Icons.calendar_today),
-                      onTap: pickDate,
                     ),
-                    const SizedBox(height: 8),
-                    TextField(
-                        controller: modelNameCtl,
-                        decoration:
-                            const InputDecoration(labelText: 'اسم الموديل')),
-                    const SizedBox(height: 8),
-                    TextField(
-                        controller: markerCtl,
-                        decoration:
-                            const InputDecoration(labelText: 'اسم الماركر')),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                            child: TextField(
-                          controller: lengthCtl,
-                          decoration:
-                              const InputDecoration(labelText: 'الطول'),
-                          keyboardType: TextInputType.number,
-                        )),
-                        const SizedBox(width: 8),
-                        Expanded(
-                            child: TextField(
-                          controller: widthCtl,
-                          decoration:
-                              const InputDecoration(labelText: 'العرض'),
-                          keyboardType: TextInputType.number,
-                        )),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: utilCtl,
-                      decoration:
-                          const InputDecoration(labelText: 'نسبة الإستغلال %'),
-                      keyboardType: TextInputType.number,
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                        controller: placedCtl,
-                        decoration: const InputDecoration(
-                            labelText: 'Placed / Unplaced (نص)')),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: sizesCtl,
-                      decoration: const InputDecoration(
-                          labelText: 'المقاسات/الكميات مثال 355:2, 43:1'),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: priceCtl,
-                      decoration: const InputDecoration(labelText: 'السعر'),
-                      keyboardType: TextInputType.number,
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: descCtl,
-                      decoration: const InputDecoration(labelText: 'الوصف'),
-                      maxLines: 2,
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                        controller: imageCtl,
-                        decoration:
-                            const InputDecoration(labelText: 'رابط الصورة')),
-                  ],
-                ),
+                  const SizedBox(height: 8),
+
+                  // Model name
+                  TextFormField(
+                    controller: modelNameCtl,
+                    decoration: const InputDecoration(labelText: 'اسم الموديل'),
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'اسم الموديل مطلوب'
+                        : null,
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Marker name
+                  TextFormField(
+                    controller: markerCtl,
+                    decoration: const InputDecoration(labelText: 'اسم الماركر'),
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'اسم الماركر مطلوب'
+                        : null,
+                  ),
+                  const SizedBox(height: 8),
+
+                  // الطول (no validator)
+                  TextFormField(
+                    controller: lengthCtl,
+                    decoration: const InputDecoration(labelText: 'الطول'),
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 8),
+
+                  // العرض (no validator)
+                  TextFormField(
+                    controller: widthCtl,
+                    decoration: const InputDecoration(labelText: 'العرض'),
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 8),
+
+                  // نسبة الإستغلال % (no validator)
+                  TextFormField(
+                    controller: utilCtl,
+                    decoration:
+                        const InputDecoration(labelText: 'نسبة الإستغلال %'),
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Placed/Unplaced (no validator)
+                  TextFormField(
+                    controller: placedCtl,
+                    decoration:
+                        const InputDecoration(labelText: 'Placed / Unplaced'),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Description
+                  TextFormField(
+                    controller: descCtl,
+                    decoration: const InputDecoration(labelText: 'الوصف'),
+                    maxLines: 2,
+                  ),
+                ]),
               ),
             ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('إلغاء')),
-              ElevatedButton(
-                onPressed: () async {
-                  if (clientId == null) {
-                    _snack('اختر العميل', error: true);
-                    return;
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                // require form + date
+                if (_formKey.currentState!.validate() == false ||
+                    modelDate == null) {
+                  return;
+                }
+
+                final payload = {
+                  'client_id'   : clientId,
+                  'season_id'   : seasonId,
+                  'model_date'  : modelDate!.toIso8601String(),
+                  'model_name'  : modelNameCtl.text.trim(),
+                  'marker_name' : markerCtl.text.trim(),
+                  'length'      : double.tryParse(lengthCtl.text) ?? 0,
+                  'width'       : double.tryParse(widthCtl.text) ?? 0,
+                  'util_percent': double.tryParse(utilCtl.text) ?? 0,
+                  'placed'      : placedCtl.text.trim(),
+                  'description' : descCtl.text.trim(),
+                };
+
+                try {
+                  late http.Response res;
+                  if (isEdit) {
+                    res = await http.put(
+                      Uri.parse('$baseUrl${m!['id']}'),
+                      headers: {'Content-Type': 'application/json'},
+                      body: jsonEncode(payload),
+                    );
+                    if (res.statusCode != 200) throw Exception(res.body);
+                  } else {
+                    res = await http.post(
+                      Uri.parse(baseUrl),
+                      headers: {'Content-Type': 'application/json'},
+                      body: jsonEncode(payload),
+                    );
+                    if (res.statusCode != 201) throw Exception(res.body);
                   }
-                  if (modelDate == null) {
-                    _snack('اختر التاريخ', error: true);
-                    return;
-                  }
-                  if (modelNameCtl.text.trim().isEmpty) {
-                    _snack('اسم الموديل مطلوب', error: true);
-                    return;
-                  }
-                  final payload = {
-                    'client_id': clientId,
-                    'season_id': seasonId,
-                    'model_date': modelDate!.toIso8601String(),
-                    'model_name': modelNameCtl.text.trim(),
-                    'marker_name': markerCtl.text.trim(),
-                    'length': double.tryParse(lengthCtl.text) ?? 0,
-                    'width': double.tryParse(widthCtl.text) ?? 0,
-                    'util_percent': double.tryParse(
-                            utilCtl.text.replaceAll('%', '')) ??
-                        0,
-                    'placed': placedCtl.text.trim(),
-                    'sizes_text': sizesCtl.text.trim(),
-                    'price': double.tryParse(priceCtl.text) ?? 0,
-                    'description': descCtl.text.trim(),
-                    'image_url': imageCtl.text.trim(),
-                  };
-                  try {
-                    late http.Response res;
-                    if (isEdit) {
-                      res = await http.put(
-                        Uri.parse('$baseUrl${m!['id']}'),
-                        headers: {'Content-Type': 'application/json'},
-                        body: jsonEncode(payload),
-                      );
-                      if (res.statusCode != 200) throw Exception(res.body);
-                    } else {
-                      res = await http.post(
-                        Uri.parse(baseUrl),
-                        headers: {'Content-Type': 'application/json'},
-                        body: jsonEncode(payload),
-                      );
-                      if (res.statusCode != 201) throw Exception(res.body);
-                    }
-                    Navigator.pop(ctx);
-                    _snack('تم الحفظ');
-                    await _fetchModels();
-                  } catch (e) {
-                    _snack('خطأ في الحفظ: $e', error: true);
-                  }
-                },
-                child: Text(isEdit ? 'تحديث' : 'حفظ'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }}
+                  Navigator.pop(ctx);
+                  _snack('تم الحفظ');
+                  await _fetchModels();
+                } catch (e) {
+                  _snack('خطأ في الحفظ: $e', error: true);
+                }
+              },
+              child: Text(isEdit ? 'تحديث' : 'حفظ'),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+}

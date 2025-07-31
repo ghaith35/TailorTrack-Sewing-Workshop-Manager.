@@ -1,161 +1,169 @@
+import 'dart:convert';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:postgres/postgres.dart';
-import 'dart:convert';
 
 Router getSeasonRoutes(PostgreSQLConnection db) {
   final router = Router();
 
   double parseNum(dynamic v) =>
       v == null ? 0.0 : (v is num ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0);
-
   int parseInt(dynamic v) =>
       v == null ? 0 : (v is num ? v.toInt() : int.tryParse(v.toString()) ?? 0);
 
-  // =====================
-  // SEASONS CRUD
-  // =====================
-
-  // Create a new season
-  router.post('/', (Request request) async {
+  // Create
+  router.post('/', (Request req) async {
     try {
-      final body = await request.readAsString();
-      final data = jsonDecode(body) as Map<String, dynamic>;
-
+      final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
       final name = data['name'] as String;
       final startDate = DateTime.parse(data['start_date']);
-      final endDate = DateTime.parse(data['end_date']);
+      final endDate   = DateTime.parse(data['end_date']);
 
-      final result = await db.query("""
+      final result = await db.query('''
         INSERT INTO sewing.seasons (name, start_date, end_date)
         VALUES (@name, @start_date, @end_date)
         RETURNING id, name, start_date, end_date
-      """, substitutionValues: {
-        'name': name,
+      ''', substitutionValues: {
+        'name':       name,
         'start_date': startDate,
-        'end_date': endDate,
+        'end_date':   endDate,
       });
 
-      final newSeason = result.first;
+      final row = result.first;
       return Response(201,
-          body: jsonEncode({
-            'id': parseInt(newSeason[0]),
-            'name': newSeason[1],
-            'start_date': newSeason[2].toString(),
-            'end_date': newSeason[3].toString(),
-          }),
-          headers: {'Content-Type': 'application/json'});
+        body: jsonEncode({
+          'id':         parseInt(row[0]),
+          'name':       row[1],
+          'start_date': (row[2] as DateTime).toIso8601String(),
+          'end_date':   (row[3] as DateTime).toIso8601String(),
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
     } catch (e) {
       return Response.internalServerError(
-          body: jsonEncode({'error': 'Failed to create season: $e'}),
-          headers: {'Content-Type': 'application/json'});
+        body: jsonEncode({'error': 'Failed to create season: $e'}),
+        headers: {'Content-Type': 'application/json'},
+      );
     }
   });
 
-  // Get all seasons
-  router.get('/', (Request request) async {
+  // Read all
+  router.get('/', (Request _) async {
     try {
-      final results = await db.query("""
+      final results = await db.query('''
         SELECT id, name, start_date, end_date
         FROM sewing.seasons
         ORDER BY start_date DESC
-      """);
+      ''');
 
-      final seasons = results.map((row) => {
-        'id': parseInt(row[0]),
-        'name': row[1],
-        'start_date': row[2].toString(),
-        'end_date': row[3].toString(),
+      final seasons = results.map((r) => {
+        'id':         parseInt(r[0]),
+        'name':       r[1],
+        'start_date': (r[2] as DateTime).toIso8601String(),
+        'end_date':   (r[3] as DateTime).toIso8601String(),
       }).toList();
 
       return Response.ok(jsonEncode(seasons), headers: {'Content-Type': 'application/json'});
     } catch (e) {
       return Response.internalServerError(
-          body: jsonEncode({'error': 'Failed to fetch seasons: $e'}),
-          headers: {'Content-Type': 'application/json'});
+        body: jsonEncode({'error': 'Failed to fetch seasons: $e'}),
+        headers: {'Content-Type': 'application/json'},
+      );
     }
   });
 
-  // Get a specific season by ID
-  router.get('/<id>', (Request request, String id) async {
+  // Read one
+  router.get('/<id>', (Request _, String id) async {
+    final sid = parseInt(id);
     try {
-      final results = await db.query("""
+      final res = await db.query('''
         SELECT id, name, start_date, end_date
         FROM sewing.seasons
         WHERE id = @id
-      """, substitutionValues: {'id': parseInt(id)});
+      ''', substitutionValues: {'id': sid});
 
-      if (results.isEmpty) {
-        return Response.notFound(jsonEncode({'error': 'Season not found'}),
-            headers: {'Content-Type': 'application/json'});
+      if (res.isEmpty) {
+        return Response.notFound(
+          jsonEncode({'error': 'Season not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
       }
 
-      final season = results.first;
+      final r = res.first;
       return Response.ok(jsonEncode({
-        'id': parseInt(season[0]),
-        'name': season[1],
-        'start_date': season[2].toString(),
-        'end_date': season[3].toString(),
+        'id':         parseInt(r[0]),
+        'name':       r[1],
+        'start_date': (r[2] as DateTime).toIso8601String(),
+        'end_date':   (r[3] as DateTime).toIso8601String(),
       }), headers: {'Content-Type': 'application/json'});
     } catch (e) {
       return Response.internalServerError(
-          body: jsonEncode({'error': 'Failed to fetch season: $e'}),
-          headers: {'Content-Type': 'application/json'});
+        body: jsonEncode({'error': 'Failed to fetch season: $e'}),
+        headers: {'Content-Type': 'application/json'},
+      );
     }
   });
 
-  // Update a season
-  router.put('/<id>', (Request request, String id) async {
+  // Update
+  router.put('/<id>', (Request req, String id) async {
+    final sid = parseInt(id);
     try {
-      final body = await request.readAsString();
-      final data = jsonDecode(body) as Map<String, dynamic>;
-
-      final name = data['name'] as String;
+      final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+      final name      = data['name'] as String;
       final startDate = DateTime.parse(data['start_date']);
-      final endDate = DateTime.parse(data['end_date']);
+      final endDate   = DateTime.parse(data['end_date']);
 
-      await db.query("""
+      await db.query('''
         UPDATE sewing.seasons
         SET name = @name, start_date = @start_date, end_date = @end_date
         WHERE id = @id
-      """, substitutionValues: {
-        'id': parseInt(id),
-        'name': name,
+      ''', substitutionValues: {
+        'id':         sid,
+        'name':       name,
         'start_date': startDate,
-        'end_date': endDate,
+        'end_date':   endDate,
       });
 
-      return Response.ok(jsonEncode({'message': 'Season updated successfully'}),
-          headers: {'Content-Type': 'application/json'});
+      return Response.ok(
+        jsonEncode({'message': 'Season updated successfully'}),
+        headers: {'Content-Type': 'application/json'},
+      );
     } catch (e) {
       return Response.internalServerError(
-          body: jsonEncode({'error': 'Failed to update season: $e'}),
-          headers: {'Content-Type': 'application/json'});
+        body: jsonEncode({'error': 'Failed to update season: $e'}),
+        headers: {'Content-Type': 'application/json'},
+      );
     }
   });
 
-  // Delete a season
-  router.delete('/<id>', (Request request, String id) async {
+  // Delete (also remove related season_reports)
+  router.delete('/<id>', (Request _, String id) async {
+    final sid = parseInt(id);
     try {
-      await db.query("""
-        DELETE FROM sewing.seasons
-        WHERE id = @id
-      """, substitutionValues: {'id': parseInt(id)});
+      await db.transaction((txn) async {
+        await txn.query(
+          'DELETE FROM sewing.season_reports WHERE season_id = @id',
+          substitutionValues: {'id': sid},
+        );
+        await txn.query(
+          'DELETE FROM sewing.seasons WHERE id = @id',
+          substitutionValues: {'id': sid},
+        );
+      });
 
-      return Response.ok(jsonEncode({'message': 'Season deleted successfully'}),
-          headers: {'Content-Type': 'application/json'});
+      return Response.ok(
+        jsonEncode({'message': 'Season deleted successfully'}),
+        headers: {'Content-Type': 'application/json'},
+      );
     } catch (e) {
       return Response.internalServerError(
-          body: jsonEncode({'error': 'Failed to delete season: $e'}),
-          headers: {'Content-Type': 'application/json'});
+        body: jsonEncode({'error': 'Failed to delete season: $e'}),
+        headers: {'Content-Type': 'application/json'},
+      );
     }
   });
 
-  // =====================
-  // SEASON PROFIT CALCULATION
-  // =====================
-
-    router.get('/<id>/profit', (Request request, String id) async {
+  router.get('/<id>/profit', (Request request, String id) async {
     try {
       final seasonResult = await db.query("""
         SELECT start_date, end_date
@@ -246,9 +254,5 @@ Router getSeasonRoutes(PostgreSQLConnection db) {
       );
     }
   });
-
-
   return router;
 }
-
-

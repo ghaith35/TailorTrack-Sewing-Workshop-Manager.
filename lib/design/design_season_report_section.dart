@@ -146,48 +146,73 @@ class _DesignSeasonReportSectionState extends State<DesignSeasonReportSection> {
     }
   }
 
-  Future<void> _addSeason() async {
+    Future<void> _addSeason() async {
+    final _formKey = GlobalKey<FormState>();
     final nameCtl = TextEditingController();
-    DateTime? startDate, endDate;
+    DateTime? startDate;
+    DateTime? endDate;
     bool saving = false;
 
     await showDialog(
       context: context,
       builder: (_) => StatefulBuilder(builder: (ctx, setD) {
-        Future<void> pick(bool start) async {
-          final p = await showDatePicker(
+        Future<void> pickDate(bool isStart) async {
+          final picked = await showDatePicker(
             context: ctx,
             initialDate: DateTime.now(),
             firstDate: DateTime(2000),
             lastDate: DateTime(2100),
+            locale: const Locale('ar', 'AR'),            // ← Arabic
           );
-          if (p != null) setD(() => start ? startDate = p : endDate = p);
+          if (picked != null) {
+            setD(() => isStart ? startDate = picked : endDate = picked);
+          }
         }
 
         return AlertDialog(
           title: const Text('إضافة موسم جديد'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
+          content: Form(
+            key: _formKey,
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                TextFormField(
                   controller: nameCtl,
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
                     labelText: 'اسم الموسم',
                   ),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'الاسم مطلوب' : null,
                 ),
                 const SizedBox(height: 12),
-                _DatePickTile(
-                    label: 'تاريخ البدء',
-                    date: startDate,
-                    onTap: () => pick(true)),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(startDate == null
+                      ? 'تاريخ البدء'
+                      : 'تاريخ البدء: ${startDate!.toLocal().toString().split(' ')[0]}'),
+                  trailing: const Icon(Icons.calendar_today),
+                  onTap: () => pickDate(true),
+                ),
+                if (startDate == null)
+                  Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('الرجاء اختيار تاريخ البدء',
+                          style: TextStyle(color: Colors.red[700], fontSize: 12))),
                 const SizedBox(height: 8),
-                _DatePickTile(
-                    label: 'تاريخ الانتهاء',
-                    date: endDate,
-                    onTap: () => pick(false)),
-              ],
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(endDate == null
+                      ? 'تاريخ الانتهاء'
+                      : 'تاريخ الانتهاء: ${endDate!.toLocal().toString().split(' ')[0]}'),
+                  trailing: const Icon(Icons.calendar_today),
+                  onTap: () => pickDate(false),
+                ),
+                if (endDate == null)
+                  Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('الرجاء اختيار تاريخ الانتهاء',
+                          style: TextStyle(color: Colors.red[700], fontSize: 12))),
+              ]),
             ),
           ),
           actions: [
@@ -200,18 +225,17 @@ class _DesignSeasonReportSectionState extends State<DesignSeasonReportSection> {
               onPressed: saving
                   ? null
                   : () async {
-                      if (nameCtl.text.isEmpty ||
-                          startDate == null ||
-                          endDate == null) {
-                        _snack('الرجاء ملء جميع الحقول.', c: Colors.red);
-                        return;
-                      }
+                      // Form fields
+                      if (!_formKey.currentState!.validate()) return;
+                      // Manual date checks
+                      if (startDate == null || endDate == null) return;
                       if (startDate!.isAfter(endDate!)) {
                         _snack('تاريخ البدء يجب أن يكون قبل الانتهاء.',
                             c: Colors.red);
                         return;
                       }
                       setD(() => saving = true);
+
                       try {
                         final res = await http.post(
                           Uri.parse('$baseUrl/seasons'),
@@ -233,6 +257,7 @@ class _DesignSeasonReportSectionState extends State<DesignSeasonReportSection> {
                       } catch (e) {
                         _snack('خطأ اتصال: $e', c: Colors.red);
                       }
+
                       setD(() => saving = false);
                     },
             ),
@@ -243,50 +268,73 @@ class _DesignSeasonReportSectionState extends State<DesignSeasonReportSection> {
   }
 
   Future<void> _editSeason(dynamic season) async {
+    final _formKey = GlobalKey<FormState>();
     final nameCtl = TextEditingController(text: season['name'] ?? '');
     DateTime? startDate = DateTime.tryParse(season['start_date'] ?? '');
-    DateTime? endDate = DateTime.tryParse(season['end_date'] ?? '');
+    DateTime? endDate   = DateTime.tryParse(season['end_date']   ?? '');
     bool saving = false;
 
     await showDialog(
       context: context,
       builder: (_) => StatefulBuilder(builder: (ctx, setD) {
-        Future<void> pick(bool start) async {
+        Future<void> pickDate(bool isStart) async {
+          final initial = isStart ? startDate : endDate;
           final p = await showDatePicker(
             context: ctx,
-            initialDate: (start ? startDate : endDate) ?? DateTime.now(),
+            initialDate: initial ?? DateTime.now(),
             firstDate: DateTime(2000),
             lastDate: DateTime(2100),
+            locale: const Locale('ar', 'AR'),            // ← Arabic
           );
-          if (p != null) setD(() => start ? startDate = p : endDate = p);
+          if (p != null) {
+            setD(() => isStart ? startDate = p : endDate = p);
+          }
         }
 
         return AlertDialog(
           title: const Text('تعديل الموسم'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
+          content: Form(
+            key: _formKey,
+            child: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                TextFormField(
                   controller: nameCtl,
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
                     labelText: 'اسم الموسم',
                   ),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'الاسم مطلوب' : null,
                 ),
                 const SizedBox(height: 12),
-                _DatePickTile(
-                  label: 'تاريخ البدء',
-                  date: startDate,
-                  onTap: () => pick(true),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(startDate == null
+                      ? 'تاريخ البدء'
+                      : 'تاريخ البدء: ${startDate!.toLocal().toString().split(' ')[0]}'),
+                  trailing: const Icon(Icons.calendar_today),
+                  onTap: () => pickDate(true),
                 ),
+                if (startDate == null)
+                  Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('الرجاء اختيار تاريخ البدء',
+                          style: TextStyle(color: Colors.red[700], fontSize: 12))),
                 const SizedBox(height: 8),
-                _DatePickTile(
-                  label: 'تاريخ الانتهاء',
-                  date: endDate,
-                  onTap: () => pick(false),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(endDate == null
+                      ? 'تاريخ الانتهاء'
+                      : 'تاريخ الانتهاء: ${endDate!.toLocal().toString().split(' ')[0]}'),
+                  trailing: const Icon(Icons.calendar_today),
+                  onTap: () => pickDate(false),
                 ),
-              ],
+                if (endDate == null)
+                  Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('الرجاء اختيار تاريخ الانتهاء',
+                          style: TextStyle(color: Colors.red[700], fontSize: 12))),
+              ]),
             ),
           ),
           actions: [
@@ -299,18 +347,15 @@ class _DesignSeasonReportSectionState extends State<DesignSeasonReportSection> {
               onPressed: saving
                   ? null
                   : () async {
-                      if (nameCtl.text.isEmpty ||
-                          startDate == null ||
-                          endDate == null) {
-                        _snack('الرجاء ملء جميع الحقول.', c: Colors.red);
-                        return;
-                      }
+                      if (!_formKey.currentState!.validate()) return;
+                      if (startDate == null || endDate == null) return;
                       if (startDate!.isAfter(endDate!)) {
                         _snack('تاريخ البدء يجب أن يكون قبل الانتهاء.',
                             c: Colors.red);
                         return;
                       }
                       setD(() => saving = true);
+
                       try {
                         final res = await http.put(
                           Uri.parse('$baseUrl/seasons/${season['id']}'),
@@ -332,6 +377,7 @@ class _DesignSeasonReportSectionState extends State<DesignSeasonReportSection> {
                       } catch (e) {
                         _snack('خطأ اتصال: $e', c: Colors.red);
                       }
+
                       setD(() => saving = false);
                     },
             ),
@@ -766,4 +812,3 @@ class _DatePickTile extends StatelessWidget {
   }
 }
 
-// (Optional) Donut chart left as in sewing file if you want later.

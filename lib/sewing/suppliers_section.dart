@@ -42,7 +42,7 @@ class _SewingSuppliersSectionState extends State<SewingSuppliersSection> {
   Future<void> _fetchSuppliers() async {
     try {
       final res = await http.get(Uri.parse(_apiUrl));
-      if (res.statusCode == 200) {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
         final List<dynamic> list = jsonDecode(res.body);
         _suppliers = list.cast<Map<String, dynamic>>();
         _suppliers.sort((a, b) =>
@@ -68,93 +68,132 @@ class _SewingSuppliersSectionState extends State<SewingSuppliersSection> {
     final addrCtrl = TextEditingController(text: existing?['address'] ?? '');
     final compCtrl =
         TextEditingController(text: existing?['company_name'] ?? '');
+    final _formKey = GlobalKey<FormState>();
 
     await showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text(isEdit ? 'تعديل مورد' : 'إضافة مورد'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(labelText: 'الاسم الكامل'),
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: Text(isEdit ? 'تعديل مورد' : 'إضافة مورد'),
+          content: SingleChildScrollView(
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    controller: nameCtrl,
+                    decoration:
+                        const InputDecoration(labelText: 'الاسم الكامل'),
+                    validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: phoneCtrl,
+                    decoration:
+                        const InputDecoration(labelText: 'رقم الهاتف'),
+                    keyboardType: TextInputType.phone,
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) return 'مطلوب';
+                      final phone = v.trim();
+                      if (!RegExp(r'^0\d{9}$').hasMatch(phone)) {
+                        return 'رقم الهاتف يجب أن يبدأ بـ 0 ويحتوي على 10 أرقام';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: addrCtrl,
+                    decoration: const InputDecoration(labelText: 'العنوان'),
+                    validator: (v) => v!.isEmpty ? 'مطلوب' : null,
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: compCtrl,
+                    decoration: const InputDecoration(
+                        labelText: 'اسم الشركة (اختياري)'),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: phoneCtrl,
-                decoration: const InputDecoration(labelText: 'رقم الهاتف'),
-                keyboardType: TextInputType.phone,
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: addrCtrl,
-                decoration: const InputDecoration(labelText: 'العنوان'),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: compCtrl,
-                decoration:
-                    const InputDecoration(labelText: 'اسم الشركة (اختياري)'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.primary,
-              foregroundColor: Colors.white,
             ),
-            onPressed: () async {
-              final payload = {
-                'full_name': nameCtrl.text.trim(),
-                'phone': phoneCtrl.text.trim(),
-                'address': addrCtrl.text.trim(),
-                'company_name':
-                    compCtrl.text.trim().isNotEmpty ? compCtrl.text.trim() : null,
-              };
-              try {
-                if (isEdit) {
-                  final uri = Uri.parse(_apiUrl).resolve('${existing!['id']}');
-                  final res = await http.put(uri,
-                      headers: {'Content-Type': 'application/json'},
-                      body: jsonEncode(payload));
-                  if (res.statusCode != 200) throw Exception(res.statusCode);
-                } else {
-                  final res = await http.post(Uri.parse(_apiUrl),
-                      headers: {'Content-Type': 'application/json'},
-                      body: jsonEncode(payload));
-                  if (res.statusCode != 201) throw Exception(res.statusCode);
-                }
-                Navigator.pop(context);
-                _fetchSuppliers();
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('خطأ في الحفظ: $e'), backgroundColor: Colors.red),
-                );
-              }
-            },
-            child: Text(isEdit ? 'تحديث' : 'حفظ'),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                if (!_formKey.currentState!.validate()) return;
+                final payload = {
+                  'full_name': nameCtrl.text.trim(),
+                  'phone': phoneCtrl.text.trim(),
+                  'address': addrCtrl.text.trim(),
+                  'company_name':
+                      compCtrl.text.trim().isEmpty ? null : compCtrl.text.trim(),
+                };
+
+                try {
+                  late http.Response res;
+                  if (isEdit) {
+                    final uri =
+                        Uri.parse(_apiUrl).resolve('${existing!['id']}');
+                    res = await http.put(
+                      uri,
+                      headers: {'Content-Type': 'application/json'},
+                      body: jsonEncode(payload),
+                    );
+                  } else {
+                    res = await http.post(
+                      Uri.parse(_apiUrl),
+                      headers: {'Content-Type': 'application/json'},
+                      body: jsonEncode(payload),
+                    );
+                  }
+
+                  if (res.statusCode < 200 || res.statusCode >= 300) {
+                    throw Exception('HTTP ${res.statusCode}');
+                  }
+
+                  Navigator.of(dialogContext).pop();
+                  _fetchSuppliers();
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('خطأ في الحفظ: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              },
+              child: Text(isEdit ? 'تحديث' : 'حفظ'),
+            ),
+          ],
+        );
+      },
     );
   }
 
   Future<void> _confirmDelete(int id) async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (BuildContext dialogContext) => AlertDialog(
         title: const Text('حذف مورد'),
         content: const Text('هل أنت متأكد من حذف هذا المورد؟'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('إلغاء'),
+          ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
             child: const Text('حذف'),
           ),
         ],
@@ -164,7 +203,9 @@ class _SewingSuppliersSectionState extends State<SewingSuppliersSection> {
       try {
         final uri = Uri.parse(_apiUrl).resolve('$id');
         final res = await http.delete(uri);
-        if (res.statusCode != 200) throw Exception(res.statusCode);
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          throw Exception('HTTP ${res.statusCode}');
+        }
         _fetchSuppliers();
       } catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -178,102 +219,80 @@ class _SewingSuppliersSectionState extends State<SewingSuppliersSection> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Top bar: Search first, then Add button
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
-                        children: [
-                          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const SizedBox(width: 8),
               SizedBox(
                 width: 220,
                 child: TextField(
                   controller: _searchController,
                   decoration: const InputDecoration(
-                    labelText: 'بحث بالعميل',
+                    labelText: 'بحث بالمورد',
                     prefixIcon: Icon(Icons.search),
                   ),
                 ),
               ),
-              IconButton(
-                tooltip: 'تحديث',
-                onPressed: _fetchSuppliers,
-                icon: const Icon(Icons.refresh),
-              ),],),
-                          // SizedBox(
-                          //   width: 200,
-                          //   child: TextField(
-                          //     controller: _searchController,
-                          //     decoration: InputDecoration(
-                          //       hintText: 'بحث...',
-                          //       prefixIcon: const Icon(Icons.search),
-                          //       filled: true,
-                          //       fillColor: Colors.white,
-                          //       border: OutlineInputBorder(
-                          //         borderRadius: BorderRadius.circular(8),
-                          //         borderSide: BorderSide.none,
-                          //       ),
-                          //       contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                          //     ),
-                          //   ),
-                          // ),
-                              const Spacer(),
-                              ElevatedButton.icon(
-                                onPressed: () => _showSupplierDialog(),
-                                icon: const Icon(Icons.add, color: Colors.white),
-                                label: const Text('إضافة مورد'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Theme.of(context).colorScheme.primary,
-                                  foregroundColor: Colors.white,
-                                ),
-                              ),
+              const Spacer(),
+              ElevatedButton.icon(
+                onPressed: () => _showSupplierDialog(),
+                icon: const Icon(Icons.add, color: Colors.white),
+                label: const Text('إضافة مورد'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: Colors.white,
+                ),
+              ),
             ],
           ),
         ),
-
-        // Table
         Expanded(
           child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              headingRowColor: MaterialStateProperty.all(
-                Theme.of(context).colorScheme.primary,
+            scrollDirection: Axis.vertical,
+            child: Scrollbar(
+              thumbVisibility: true,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  headingRowColor: MaterialStateProperty.all(
+                    Theme.of(context).colorScheme.primary,
+                  ),
+                  headingTextStyle: const TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold,
+                  ),
+                  columns: const [
+                    DataColumn(label: Text('الاسم الكامل')),
+                    DataColumn(label: Text('رقم الهاتف')),
+                    DataColumn(label: Text('العنوان')),
+                    DataColumn(label: Text('اسم الشركة')),
+                    DataColumn(label: Text('خيارات')),
+                  ],
+                  rows: _filtered.map((s) {
+                    return DataRow(cells: [
+                      DataCell(Text(s['full_name'] ?? '-')),
+                      DataCell(Text(s['phone'] ?? '-')),
+                      DataCell(Text(s['address'] ?? '-')),
+                      DataCell(Text(s['company_name'] ?? '-')),
+                      DataCell(Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: Icon(
+                              Icons.edit,
+                              color: Theme.of(context).colorScheme.secondary,
+                            ),
+                            onPressed: () => _showSupplierDialog(existing: s),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () => _confirmDelete(s['id']),
+                          ),
+                        ],
+                      )),
+                    ]);
+                  }).toList(),
+                ),
               ),
-              headingTextStyle: const TextStyle(
-                color: Colors.white, fontWeight: FontWeight.bold,
-              ),
-              columns: const [
-                DataColumn(label: Text('الاسم الكامل')),
-                DataColumn(label: Text('رقم الهاتف')),
-                DataColumn(label: Text('العنوان')),
-                DataColumn(label: Text('اسم الشركة')),
-                DataColumn(label: Text('خيارات')),
-              ],
-              rows: _filtered.map((s) {
-                return DataRow(cells: [
-                  DataCell(Text(s['full_name'] ?? '-')),
-                  DataCell(Text(s['phone'] ?? '-')),
-                  DataCell(Text(s['address'] ?? '-')),
-                  DataCell(Text(s['company_name'] ?? '-')),
-                  DataCell(Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.secondary),
-                        onPressed: () => _showSupplierDialog(existing: s),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: Colors.red),
-                        onPressed: () => _confirmDelete(s['id']),
-                      ),
-                    ],
-                  )),
-                ]);
-              }).toList(),
             ),
           ),
         ),

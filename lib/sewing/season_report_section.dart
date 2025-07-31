@@ -1,6 +1,5 @@
 // lib/sewing/season_report_section.dart
-// UPDATED: default season = the one containing today, added other_expenses & net_profit,
-// sidebar redesigned to match SewingPurchasesSection style, plus misc UI tweaks.
+// UPDATED: date pickers now use `locale: Locale('ar')` only.
 
 import 'dart:convert';
 import 'dart:math' as math;
@@ -89,7 +88,6 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
         _allSeasons = jsonDecode(res.body) as List<dynamic>;
         _filteredSeasons = List.from(_allSeasons);
 
-        // pick default season: today inside [start_date, end_date]
         if (_allSeasons.isNotEmpty) {
           final now = DateTime.now();
           dynamic found = _allSeasons.firstWhere(
@@ -97,7 +95,8 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
               final sd = DateTime.tryParse(s['start_date'] ?? '');
               final ed = DateTime.tryParse(s['end_date'] ?? '');
               if (sd == null || ed == null) return false;
-              return (now.isAfter(sd) || _sameDay(now, sd)) && (now.isBefore(ed) || _sameDay(now, ed));
+              return (now.isAfter(sd) || _sameDay(now, sd)) &&
+                     (now.isBefore(ed)  || _sameDay(now, ed));
             },
             orElse: () => _allSeasons.first,
           );
@@ -113,7 +112,8 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
     }
   }
 
-  bool _sameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
+  bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
 
   Future<void> _selectSeason(dynamic season) async {
     setState(() {
@@ -153,6 +153,7 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
             initialDate: DateTime.now(),
             firstDate: DateTime(2000),
             lastDate: DateTime(2100),
+            locale: const Locale('ar'),
           );
           if (p != null) setD(() => start ? startDate = p : endDate = p);
         }
@@ -226,7 +227,7 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
   Future<void> _editSeason(dynamic season) async {
     final nameCtl = TextEditingController(text: season['name'] ?? '');
     DateTime? startDate = DateTime.tryParse(season['start_date'] ?? '');
-    DateTime? endDate = DateTime.tryParse(season['end_date'] ?? '');
+    DateTime? endDate   = DateTime.tryParse(season['end_date']   ?? '');
     bool saving = false;
 
     await showDialog(
@@ -238,6 +239,7 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
             initialDate: (start ? startDate : endDate) ?? DateTime.now(),
             firstDate: DateTime(2000),
             lastDate: DateTime(2100),
+            locale: const Locale('ar'),
           );
           if (p != null) setD(() => start ? startDate = p : endDate = p);
         }
@@ -349,7 +351,6 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
           children: [
             _buildSidebar(),
             const VerticalDivider(width: 1),
-            // Main content
             Expanded(
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 300),
@@ -362,7 +363,6 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
     );
   }
 
-  // ===== Sidebar like SewingPurchasesSection =====
   Widget _buildSidebar() {
     return Container(
       width: _sidebarWidth,
@@ -424,7 +424,7 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
                             itemCount: _filteredSeasons.length,
                             itemBuilder: (ctx, i) {
                               final s = _filteredSeasons[i];
-                              final bool sel = _selectedSeason != null && s['id'] == _selectedSeason['id'];
+                              final sel = _selectedSeason != null && s['id'] == _selectedSeason['id'];
                               return Card(
                                 margin: const EdgeInsets.symmetric(vertical: 4),
                                 elevation: sel ? 4 : 1,
@@ -460,38 +460,32 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
     );
   }
 
-  Widget _placeholder() {
-    return Center(
-      key: const ValueKey('ph'),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.calendar_month, size: 90, color: Colors.grey[400]),
-          const SizedBox(height: 16),
-          const Text('اختر موسمًا من الشريط الجانبي لعرض التقرير', style: TextStyle(fontSize: 18)),
-        ],
-      ),
-    );
-  }
+  Widget _placeholder() => Center(
+    key: const ValueKey('ph'),
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.calendar_month, size: 90, color: Colors.grey[400]),
+        const SizedBox(height: 16),
+        const Text('اختر موسمًا من الشريط الجانبي لعرض التقرير', style: TextStyle(fontSize: 18)),
+      ],
+    ),
+  );
 
   Widget _report(dynamic season) {
     final id = season['id'] as int;
-    if (_loadingProfit) {
-      return const Center(key: ValueKey('lp'), child: CircularProgressIndicator());
-    }
-    if (_errorProfit != null) {
-      return Center(key: const ValueKey('ep'), child: Text(_errorProfit!));
-    }
+    if (_loadingProfit) return const Center(key: ValueKey('lp'), child: CircularProgressIndicator());
+    if (_errorProfit != null) return Center(key: const ValueKey('ep'), child: Text(_errorProfit!));
 
-    final data = _seasonProfits[id] ?? {};
-    final rev = (data['total_revenue'] ?? 0).toDouble();
-    final cogs = (data['total_cost_of_goods_sold'] ?? 0).toDouble();
-    final preProfit = (data['total_profit'] ?? 0).toDouble(); // قبل المصاريف الأخرى
-    final other = (data['other_expenses'] ?? 0).toDouble();
-    final net = (data['net_profit'] ?? (preProfit - other)).toDouble();
+    final data      = _seasonProfits[id] ?? {};
+    final rev       = (data['total_revenue']            ?? 0).toDouble();
+    final cogs      = (data['total_cost_of_goods_sold'] ?? 0).toDouble();
+    final preProfit = (data['total_profit']             ?? 0).toDouble();
+    final other     = (data['other_expenses']           ?? 0).toDouble();
+    final net       = (data['net_profit']               ?? (preProfit - other)).toDouble();
 
-    final List<dynamic> byModel = (data['profit_by_model'] ?? []) as List<dynamic>;
-    final List<dynamic> byClient = (data['profit_by_client'] ?? []) as List<dynamic>;
+    final byModel  = (data['profit_by_model']  ?? <dynamic>[]) as List<dynamic>;
+    final byClient = (data['profit_by_client'] ?? <dynamic>[]) as List<dynamic>;
 
     return SingleChildScrollView(
       key: const ValueKey('rp'),
@@ -505,7 +499,6 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
               style: Theme.of(context).textTheme.titleMedium),
           const Divider(height: 32),
 
-          // الإحصائيات الرئيسية
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -517,10 +510,6 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
               _statCard('الربح الصافي', net, Icons.balance, net >= 0 ? Colors.green : Colors.red),
             ].map((w) => SizedBox(width: 220, child: w)).toList(),
           ),
-
-          // const SizedBox(height: 24),
-          // if (rev != 0 || cogs != 0 || preProfit != 0 || other != 0 || net != 0)
-          //   _donutSection(revenue: rev, cogs: cogs, other: other, net: net),
 
           const SizedBox(height: 32),
           Text('تفاصيل الأداء', style: Theme.of(context).textTheme.headlineSmall),
@@ -534,9 +523,9 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
             _breakdownTable(
               headers: const ['الموديل', 'الإيرادات', 'التكلفة', 'الربح'],
               rows: byModel.map<List<String>>((m) {
-                final r = (m['revenue'] ?? 0).toDouble();
-                final cg = (m['cogs'] ?? 0).toDouble();
-                final pf = (m['profit'] ?? 0).toDouble();
+                final r  = (m['revenue'] ?? 0).toDouble();
+                final cg = (m['cogs']    ?? 0).toDouble();
+                final pf = (m['profit']  ?? 0).toDouble();
                 return [
                   (m['model_name'] ?? '').toString(),
                   r.toStringAsFixed(2),
@@ -544,7 +533,7 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
                   pf.toStringAsFixed(2),
                 ];
               }).toList(),
-            ),
+            ),  
           ],
           if (byClient.isNotEmpty) ...[
             const SizedBox(height: 32),
@@ -553,9 +542,9 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
             _breakdownTable(
               headers: const ['العميل', 'الإيرادات', 'التكلفة', 'الربح'],
               rows: byClient.map<List<String>>((c) {
-                final r = (c['revenue'] ?? 0).toDouble();
-                final cg = (c['cogs'] ?? 0).toDouble();
-                final pf = (c['profit'] ?? 0).toDouble();
+                final r  = (c['revenue'] ?? 0).toDouble();
+                final cg = (c['cogs']    ?? 0).toDouble();
+                final pf = (c['profit']  ?? 0).toDouble();
                 return [
                   (c['client_name'] ?? '').toString(),
                   r.toStringAsFixed(2),
@@ -598,103 +587,63 @@ class _SeasonReportSectionState extends State<SeasonReportSection> {
     );
   }
 
-  // Widget _donutSection({
-  //   required double revenue,
-  //   required double cogs,
-  //   required double other,
-  //   required double net,
-  // }) {
-  //   final totalAbs = cogs.abs() + other.abs() + net.abs();
-  //   final hasData = totalAbs > 0;
-  //   return Card(
-  //     elevation: 1,
-  //     child: Padding(
-  //       padding: const EdgeInsets.all(16),
-  //       child: Column(
-  //         children: [
-  //           Text('نسبة التكلفة / المصاريف / الربح', style: Theme.of(context).textTheme.titleMedium),
-  //           const SizedBox(height: 12),
-  //           SizedBox(
-  //             height: kDonutHeight,
-  //             child: hasData
-  //                 ? _DonutChart(
-  //                     slices: [
-  //                       DonutSlice(value: cogs.abs(), color: Colors.orange.shade300, label: 'تكلفة البضاعة'),
-  //                       DonutSlice(value: other.abs(), color: Colors.red.shade300, label: 'مصاريف أخرى'),
-  //                       DonutSlice(value: net.abs(), color: Colors.green.shade300, label: 'ربح صافي'),
-  //                     ],
-  //                   )
-  //                 : const Center(child: Text('لا توجد بيانات لعرض الرسم')),
-  //           ),
-  //           if (revenue != 0) ...[
-  //             const SizedBox(height: 8),
-  //             Text('إجمالي الإيرادات: ${revenue.toStringAsFixed(2)} دج',
-  //                 style: const TextStyle(fontWeight: FontWeight.bold)),
-  //           ]
-  //         ],
-  //       ),
-  //     ),
-  //   );
-  // }
-
   Widget _metricsTable({
-  required double rev,
-  required double cogs,
-  required double pre,
-  required double other,
-  required double net,
-}) {
-  final table = DataTable(
-    headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
-    headingTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-    columns: const [
-      DataColumn(label: Text('المقياس')),
-      DataColumn(label: Text('القيمة')),
-    ],
-    rows: [
-      DataRow(cells: [const DataCell(Text('إجمالي الإيرادات')), DataCell(Text('${rev.toStringAsFixed(2)} دج'))]),
-      DataRow(cells: [const DataCell(Text('تكلفة البضاعة المباعة')), DataCell(Text('${cogs.toStringAsFixed(2)} دج'))]),
-      DataRow(cells: [const DataCell(Text('الربح قبل المصاريف الأخرى')), DataCell(Text('${pre.toStringAsFixed(2)} دج'))]),
-      DataRow(cells: [const DataCell(Text('مصاريف أخرى')), DataCell(Text('${other.toStringAsFixed(2)} دج'))]),
-      DataRow(cells: [const DataCell(Text('الربح الصافي')), DataCell(Text('${net.toStringAsFixed(2)} دج',
-        style: TextStyle(color: net >= 0 ? Colors.green : Colors.red),
-      ))]),
-    ],
-  );
+    required double rev,
+    required double cogs,
+    required double pre,
+    required double other,
+    required double net,
+  }) {
+    final table = DataTable(
+      headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
+      headingTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+      columns: const [
+        DataColumn(label: Text('المقياس')),
+        DataColumn(label: Text('القيمة')),
+      ],
+      rows: [
+        DataRow(cells: [const DataCell(Text('إجمالي الإيرادات')), DataCell(Text('${rev.toStringAsFixed(2)} دج'))]),
+        DataRow(cells: [const DataCell(Text('تكلفة البضاعة المباعة')), DataCell(Text('${cogs.toStringAsFixed(2)} دج'))]),
+        DataRow(cells: [const DataCell(Text('الربح قبل المصاريف الأخرى')), DataCell(Text('${pre.toStringAsFixed(2)} دج'))]),
+        DataRow(cells: [const DataCell(Text('مصاريف أخرى')), DataCell(Text('${other.toStringAsFixed(2)} دج'))]),
+        DataRow(cells: [const DataCell(Text('الربح الصافي')), DataCell(Text('${net.toStringAsFixed(2)} دج',
+          style: TextStyle(color: net >= 0 ? Colors.green : Colors.red),
+        ))]),
+      ],
+    );
 
-  return LayoutBuilder(
-    builder: (ctx, cons) => SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(minWidth: cons.maxWidth),
-        child: Center(child: table),
+    return LayoutBuilder(
+      builder: (ctx, cons) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minWidth: cons.maxWidth),
+          child: Center(child: table),
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _breakdownTable({
-  required List<String> headers,
-  required List<List<String>> rows,
-}) {
-  final table = DataTable(
-    headingRowColor: MaterialStateProperty.all(Theme.of(context).primaryColor),
-    headingTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-    columns: headers.map((h) => DataColumn(label: Text(h))).toList(),
-    rows: rows.map((r) => DataRow(cells: r.map((c) => DataCell(Text(c))).toList())).toList(),
-  );
+    required List<String> headers,
+    required List<List<String>> rows,
+  }) {
+    final table = DataTable(
+      headingRowColor: MaterialStateProperty.all(Theme.of(context).primaryColor),
+      headingTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+      columns: headers.map((h) => DataColumn(label: Text(h))).toList(),
+      rows: rows.map((r) => DataRow(cells: r.map((c) => DataCell(Text(c))).toList())).toList(),
+    );
 
-  return LayoutBuilder(
-    builder: (ctx, cons) => SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(minWidth: cons.maxWidth),
-        child: Center(child: table),
+    return LayoutBuilder(
+      builder: (ctx, cons) => SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minWidth: cons.maxWidth),
+          child: Center(child: table),
+        ),
       ),
-    ),
-  );
-}
-
+    );
+  }
 }
 
 // ===================== Helper Widgets =====================
@@ -718,7 +667,7 @@ class _DatePickTile extends StatelessWidget {
   }
 }
 
-// ===================== Donut Chart (No external deps) =====================
+// ============= Donut Chart (No deps) =============
 
 class DonutSlice {
   final double value;
