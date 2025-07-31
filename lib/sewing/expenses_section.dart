@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../main.dart';
 
 class SewingExpensesSection extends StatefulWidget {
     final String role;
@@ -14,7 +15,7 @@ class SewingExpensesSection extends StatefulWidget {
 class _SewingExpensesSectionState extends State<SewingExpensesSection> {
   List expenses = [];
   List allExpenses = [];
-  final String apiUrl = 'http://127.0.0.1:8888/expenses/';
+String get apiUrl => '${globalServerUri.toString()}/expenses/';
   bool isLoading = false;
 
   // Scroll controllers for the table

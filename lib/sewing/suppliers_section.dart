@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../main.dart';
 
 class SewingSuppliersSection extends StatefulWidget {
   const SewingSuppliersSection({super.key});
@@ -13,8 +14,7 @@ class _SewingSuppliersSectionState extends State<SewingSuppliersSection> {
   List<Map<String, dynamic>> _suppliers = [];
   List<Map<String, dynamic>> _filtered = [];
   final _searchController = TextEditingController();
-  final String _apiUrl = 'http://127.0.0.1:8888/suppliers/';
-
+String get _apiUrl => '${globalServerUri.toString()}/suppliers/';
   @override
   void initState() {
     super.initState();
@@ -40,6 +40,8 @@ class _SewingSuppliersSectionState extends State<SewingSuppliersSection> {
   }
 
   Future<void> _fetchSuppliers() async {
+    final url = '$_apiUrl';  
+  debugPrint('🔗 Fetching suppliers from $url');
     try {
       final res = await http.get(Uri.parse(_apiUrl));
       if (res.statusCode >= 200 && res.statusCode < 300) {

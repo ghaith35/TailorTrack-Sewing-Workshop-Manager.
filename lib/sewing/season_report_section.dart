@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../main.dart';
 
 class SeasonReportSection extends StatefulWidget {
   const SeasonReportSection({Key? key}) : super(key: key);
@@ -14,7 +15,7 @@ class SeasonReportSection extends StatefulWidget {
 
 class _SeasonReportSectionState extends State<SeasonReportSection> {
   // ================== CONFIG ==================
-  final String baseUrl = 'http://localhost:8888';
+String get baseUrl => '${globalServerUri.toString()}';
   static const double kDonutHeight = 300; // ارتفاع الرسم
   static const double _sidebarWidth = 400; // like purchases sidebar
 

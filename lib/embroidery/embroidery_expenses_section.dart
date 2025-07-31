@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../main.dart';
 
 class EmbroideryExpensesSection extends StatefulWidget {
   const EmbroideryExpensesSection({super.key});
@@ -10,8 +11,8 @@ class EmbroideryExpensesSection extends StatefulWidget {
 }
 
 class _EmbroideryExpensesSectionState extends State<EmbroideryExpensesSection> {
-  final String apiUrl        = 'http://127.0.0.1:8888/embrodry/expenses/';
-  final String warehouseBase = 'http://127.0.0.1:8888/embrodry/warehouse';
+ String get apiUrl => '${globalServerUri.toString()}/embrodry/expenses/';
+String get warehouseBase => '${globalServerUri.toString()}/embrodry/warehouse';
 
   // Data
   List expenses = [];

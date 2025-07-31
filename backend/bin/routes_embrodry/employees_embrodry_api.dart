@@ -4,7 +4,7 @@ import 'package:postgres/postgres.dart';
 import 'dart:convert';
 
 Router getEmbrodryEmployeesRoutes(PostgreSQLConnection db) {
-  print('Embroidery Employees API: Initializing routes');
+  // print('Embroidery Employees API: Initializing routes');
   final router = Router();
 
   // Get all active employees
@@ -156,7 +156,7 @@ router.get('/attendance/monthly', (Request request) async {
   final startDate = formatDate(firstDay);
   final endDate   = formatDate(lastDay);
 
-  print('Attendance Query: $startDate to $endDate');
+  // print('Attendance Query: $startDate to $endDate');
 
   final result = await db.mappedResultsQuery(r'''
     SELECT employees.*, employee_attendance.*
@@ -173,7 +173,7 @@ router.get('/attendance/monthly', (Request request) async {
     'end'  : endDate,
   });
 
-  print('RAW RESULT: $result');
+  // print('RAW RESULT: $result');
 
   // Group by employee
   final Map<int, dynamic> grouped = {};
@@ -225,7 +225,7 @@ router.get('/attendance/piece', (Request request) async {
   final startDate = formatDate(firstDay);
   final endDate   = formatDate(lastDay);
 
-  print('Piece Attendance Query: $startDate to $endDate');
+  // print('Piece Attendance Query: $startDate to $endDate');
 
   final result = await db.mappedResultsQuery(r'''
     SELECT employees.*, piece_records.*, models.model_name
@@ -244,7 +244,7 @@ router.get('/attendance/piece', (Request request) async {
     'end'  : endDate,
   });
 
-  print('RAW PIECE RESULT: $result');
+  // print('RAW PIECE RESULT: $result');
 
   // Group by employee
   final Map<int, dynamic> grouped = {};

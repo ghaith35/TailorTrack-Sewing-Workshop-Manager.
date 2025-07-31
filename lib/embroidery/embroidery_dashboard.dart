@@ -11,6 +11,7 @@ import 'embroidery_expenses_section.dart';
 import 'embroidery_debts_section.dart';
 import 'embroidery_suppliers_section.dart';
 import 'embroidery_returns_section.dart';
+import '../main.dart';
 
 class EmbroideryDashboard extends StatefulWidget {
   final String role; // Add a role parameter to handle user roles

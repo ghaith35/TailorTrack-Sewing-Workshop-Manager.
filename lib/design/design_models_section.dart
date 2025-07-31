@@ -3,6 +3,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../main.dart';
 
 class DesignModelsSection extends StatefulWidget {
   const DesignModelsSection({Key? key}) : super(key: key);
@@ -14,7 +15,8 @@ class DesignModelsSection extends StatefulWidget {
 class _DesignModelsSectionState extends State<DesignModelsSection> {
   // ================= CONFIG =================
   static const double _sidebarWidth = 360;
-  final String baseUrl = 'http://127.0.0.1:8888/design/models/';
+  String get baseUrl => '${globalServerUri.toString()}/design/models/';
+
 
   // ================= STATE ==================
   List<Map<String, dynamic>> _models = [];

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import '../main.dart';
 
 /// =============================================================
 /// Shared / Common Widgets & Helpers
@@ -178,7 +179,7 @@ class SewingSalesSection extends StatefulWidget {
 class _SewingSalesSectionState extends State<SewingSalesSection> {
   int selectedTab = 2;
 
-  final String baseUrl = 'http://localhost:8888/sales';
+String get baseUrl => '${globalServerUri.toString()}/sales';
 
   List<dynamic> allModels = [];
   List<dynamic> allClients = [];

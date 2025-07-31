@@ -264,7 +264,7 @@ router.post('/recalc-global-prices', (Request req) async {
     }
 
     // Debug: Print the response
-    print('API Response: $finalList');
+    // print('API Response: $finalList');
 
     return Response.ok(
       jsonEncode(finalList),

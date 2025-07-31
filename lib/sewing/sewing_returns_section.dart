@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../main.dart';
 
 class SewingReturnsSection extends StatefulWidget {
   const SewingReturnsSection({super.key});
@@ -29,7 +30,7 @@ class _SewingReturnsSectionState extends State<SewingReturnsSection> {
   final ScrollController _hCtrl = ScrollController();
 
   // ---------------- API ----------------
-  final String baseUrl = 'http://localhost:8888/returns/';
+String get baseUrl => '${globalServerUri.toString()}/returns/';
 
   @override
   void initState() {

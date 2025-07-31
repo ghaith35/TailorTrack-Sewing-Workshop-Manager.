@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import '../main.dart';
 
 class SewingEmployeesSection extends StatefulWidget {
   const SewingEmployeesSection({super.key});
@@ -82,6 +83,16 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
   final ScrollController monthlyAttTableController = ScrollController();
   final ScrollController pieceAttTableController = ScrollController();
   final ScrollController presenceTableController = ScrollController();
+
+  // Dynamic URL getters
+  String get _employeesUrl => '${globalServerUri.toString()}/employees/';
+  String get _attendanceUrl => '${globalServerUri.toString()}/employees/attendance';
+  String get _loansUrl => '${globalServerUri.toString()}/employees/loans';
+  String get _piecesUrl => '${globalServerUri.toString()}/employees/pieces';
+  String get _debtsUrl => '${globalServerUri.toString()}/employees/debts';
+  String get _modelsUrl => '${globalServerUri.toString()}/employees/models';
+  String get _pieceEmployeesUrl => '${globalServerUri.toString()}/employees/list?seller_type=piece';
+  String get _attendanceBulkUrl => '${globalServerUri.toString()}/employees/attendance/bulk';
 
   @override
   void dispose() {
@@ -220,7 +231,7 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
 
   Future<void> _fetchAttendanceYears() async {
     try {
-      final res = await http.get(Uri.parse('http://127.0.0.1:8888/employees/attendance/years?type=${attType == 0 ? "monthly" : "piece"}'));
+      final res = await http.get(Uri.parse('${globalServerUri.toString()}/employees/attendance/years?type=${attType == 0 ? "monthly" : "piece"}'));
       if (res.statusCode == 200) {
         final years = (jsonDecode(res.body) as List).cast<int>();
         setState(() {
@@ -239,7 +250,7 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
   Future<void> _fetchAttendanceMonths() async {
     if (selectedYear == null) return;
     try {
-      final res = await http.get(Uri.parse('http://127.0.0.1:8888/employees/attendance/months?year=$selectedYear&type=${attType == 0 ? "monthly" : "piece"}'));
+      final res = await http.get(Uri.parse('${globalServerUri.toString()}/employees/attendance/months?year=$selectedYear&type=${attType == 0 ? "monthly" : "piece"}'));
       if (res.statusCode == 200) {
         final months = (jsonDecode(res.body) as List).cast<String>();
         setState(() {
@@ -257,7 +268,7 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
 
   Future<void> _fetchPresenceYears() async {
     try {
-      final res = await http.get(Uri.parse('http://127.0.0.1:8888/employees/attendance/years?type=monthly'));
+      final res = await http.get(Uri.parse('${globalServerUri.toString()}/employees/attendance/years?type=monthly'));
       if (res.statusCode == 200) {
         final years = (jsonDecode(res.body) as List).cast<int>();
         setState(() {
@@ -276,7 +287,7 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
   Future<void> _fetchPresenceMonths() async {
     if (selectedPresenceYear == null) return;
     try {
-      final res = await http.get(Uri.parse('http://127.0.0.1:8888/employees/attendance/months?year=$selectedPresenceYear&type=monthly'));
+      final res = await http.get(Uri.parse('${globalServerUri.toString()}/employees/attendance/months?year=$selectedPresenceYear&type=monthly'));
       if (res.statusCode == 200) {
         final months = (jsonDecode(res.body) as List).cast<String>();
         setState(() {
@@ -322,7 +333,7 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
 
     try {
       final response = await http.post(
-        Uri.parse('http://127.0.0.1:8888/employees/attendance/bulk'),
+        Uri.parse(_attendanceBulkUrl),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(attendanceRecords),
       );
@@ -355,8 +366,8 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
 
   Future<void> _fetchSalaryYears() async {
     try {
-      final monthlyRes = await http.get(Uri.parse('http://127.0.0.1:8888/employees/attendance/years?type=monthly'));
-      final pieceRes = await http.get(Uri.parse('http://127.0.0.1:8888/employees/attendance/years?type=piece'));
+      final monthlyRes = await http.get(Uri.parse('${globalServerUri.toString()}/employees/attendance/years?type=monthly'));
+      final pieceRes = await http.get(Uri.parse('${globalServerUri.toString()}/employees/attendance/years?type=piece'));
       
       Set<int> allYears = {};
       if (monthlyRes.statusCode == 200) allYears.addAll((jsonDecode(monthlyRes.body) as List).cast<int>());
@@ -380,7 +391,7 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
     if (selectedSalaryYear == null) return;
     try {
       final type = selectedSalariesTab == 0 ? 'monthly' : 'piece';
-      final res = await http.get(Uri.parse('http://127.0.0.1:8888/employees/attendance/months?year=$selectedSalaryYear&type=$type'));
+      final res = await http.get(Uri.parse('${globalServerUri.toString()}/employees/attendance/months?year=$selectedSalaryYear&type=$type'));
       if (res.statusCode == 200) {
         final months = (jsonDecode(res.body) as List).cast<String>();
         setState(() {
@@ -407,13 +418,13 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
   if (selectedSalaryMonth == null) return;
   setState(() => salaryLoading = true);
 
-  final monthlyRes = await http.get(Uri.parse('http://127.0.0.1:8888/employees/attendance/monthly?month=$selectedSalaryMonth'));
+  final monthlyRes = await http.get(Uri.parse('${globalServerUri.toString()}/employees/attendance/monthly?month=$selectedSalaryMonth'));
   monthlyAttendance = monthlyRes.statusCode == 200 ? jsonDecode(monthlyRes.body) : [];
 
-  final pieceRes = await http.get(Uri.parse('http://127.0.0.1:8888/employees/attendance/piece?month=$selectedSalaryMonth'));
+  final pieceRes = await http.get(Uri.parse('${globalServerUri.toString()}/employees/attendance/piece?month=$selectedSalaryMonth'));
   pieceAttendance = pieceRes.statusCode == 200 ? jsonDecode(pieceRes.body) : [];
 
-  final debtRes = await http.get(Uri.parse('http://127.0.0.1:8888/employees/debts/monthly-summary?month=$selectedSalaryMonth'));
+  final debtRes = await http.get(Uri.parse('${globalServerUri.toString()}/employees/debts/monthly-summary?month=$selectedSalaryMonth'));
   Map<int, num> debtData = {};
   if (debtRes.statusCode == 200) {
     final decoded = jsonDecode(debtRes.body) as Map<String, dynamic>;
@@ -427,7 +438,7 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
   // Fetch loan data for the selected month
   // In fetchSalariesData
 final loanRes = await http.get(Uri.parse(
-    'http://127.0.0.1:8888/employees/loans/monthly-summary?month=$selectedSalaryMonth'));
+    '${globalServerUri.toString()}/employees/loans/monthly-summary?month=$selectedSalaryMonth'));
 loanData = {};
 if (loanRes.statusCode == 200) {
   final decoded = jsonDecode(loanRes.body) as Map<String, dynamic>;
@@ -604,7 +615,7 @@ if (loanRes.statusCode == 200) {
 
   Future<void> fetchEmployees() async {
     setState(() => isLoading = true);
-    final response = await http.get(Uri.parse('http://127.0.0.1:8888/employees/'));
+    final response = await http.get(Uri.parse(_employeesUrl));
     if (response.statusCode == 200) {
       employees = jsonDecode(response.body);
       _filteredEmployees = employees;
@@ -624,13 +635,13 @@ if (loanRes.statusCode == 200) {
       try {
         if (initial == null) {
           await http.post(
-            Uri.parse('http://127.0.0.1:8888/employees/'),
+            Uri.parse(_employeesUrl),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(result),
           );
         } else {
           await http.put(
-            Uri.parse('http://127.0.0.1:8888/employees/${initial['id']}'),
+            Uri.parse('${globalServerUri.toString()}/employees/${initial['id']}'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(result),
           );
@@ -655,7 +666,7 @@ if (loanRes.statusCode == 200) {
       ),
     );
     if (ok == true) {
-      await http.delete(Uri.parse('http://127.0.0.1:8888/employees/$id'));
+      await http.delete(Uri.parse('${globalServerUri.toString()}/employees/$id'));
       await fetchEmployees();
     }
   }
@@ -757,8 +768,8 @@ if (loanRes.statusCode == 200) {
     });
 
     final url = attType == 0
-        ? 'http://127.0.0.1:8888/employees/attendance/monthly?month=$selectedYearMonth'
-        : 'http://127.0.0.1:8888/employees/attendance/piece?month=$selectedYearMonth';
+        ? '${globalServerUri.toString()}/employees/attendance/monthly?month=$selectedYearMonth'
+        : '${globalServerUri.toString()}/employees/attendance/piece?month=$selectedYearMonth';
 
     final res = await http.get(Uri.parse(url));
     if (res.statusCode == 200) {
@@ -778,7 +789,7 @@ if (loanRes.statusCode == 200) {
   });
 
   // build base URL
-  var url = 'http://127.0.0.1:8888/employees/attendance';
+  var url = _attendanceUrl;
 
   // selectedPresenceMonth is already "YYYY-MM"
   if (selectedPresenceMonth != null) {
@@ -803,25 +814,25 @@ if (loanRes.statusCode == 200) {
   Future<void> fetchDataSection() async {
     setState(() => isDataLoading = true);
 
-    final empRes = await http.get(Uri.parse('http://127.0.0.1:8888/employees/'));
+    final empRes = await http.get(Uri.parse(_employeesUrl));
     allEmployees = empRes.statusCode == 200 ? jsonDecode(empRes.body) : [];
 
 final pieceEmpRes = await http.get(
-  Uri.parse('http://127.0.0.1:8888/employees/list?seller_type=piece')
+  Uri.parse(_pieceEmployeesUrl)
 );    pieceEmployees = pieceEmpRes.statusCode == 200 ? jsonDecode(pieceEmpRes.body) : [];
 
-    final modelRes = await http.get(Uri.parse('http://127.0.0.1:8888/employees/models'));
+    final modelRes = await http.get(Uri.parse(_modelsUrl));
     allModels = modelRes.statusCode == 200 ? jsonDecode(modelRes.body) : [];
 
-    final loanRes = await http.get(Uri.parse('http://127.0.0.1:8888/employees/loans'));
+    final loanRes = await http.get(Uri.parse(_loansUrl));
     loans = loanRes.statusCode == 200 ? jsonDecode(loanRes.body) : [];
     _filteredLoans = loans;
 
-    final pieceRes = await http.get(Uri.parse('http://127.0.0.1:8888/employees/pieces'));
+    final pieceRes = await http.get(Uri.parse(_piecesUrl));
     pieces = pieceRes.statusCode == 200 ? jsonDecode(pieceRes.body) : [];
     _filteredPieces = pieces;
 
-    final debtRes = await http.get(Uri.parse('http://127.0.0.1:8888/employees/debts'));
+    final debtRes = await http.get(Uri.parse(_debtsUrl));
     debts = debtRes.statusCode == 200 ? jsonDecode(debtRes.body) : [];
     _filteredDebts = debts;
 
@@ -837,7 +848,7 @@ final pieceEmpRes = await http.get(
     bool hasActiveLoan = false;
 
     if (employeeId != null && initial == null) {
-      final checkRes = await http.get(Uri.parse('http://127.0.0.1:8888/employees/loans/check/$employeeId'));
+      final checkRes = await http.get(Uri.parse('${globalServerUri.toString()}/employees/loans/check/$employeeId'));
       if (checkRes.statusCode == 200) hasActiveLoan = jsonDecode(checkRes.body)['has_active_loan'] ?? false;
     }
 
@@ -864,7 +875,7 @@ final pieceEmpRes = await http.get(
                     onChanged: (v) async {
                       setState(() => employeeId = v);
                       if (v != null && initial == null) {
-                        final checkRes = await http.get(Uri.parse('http://127.0.0.1:8888/employees/loans/check/$v'));
+                        final checkRes = await http.get(Uri.parse('${globalServerUri.toString()}/employees/loans/check/$v'));
                         if (checkRes.statusCode == 200) {
                           hasActiveLoan = jsonDecode(checkRes.body)['has_active_loan'] ?? false;
                           if (hasActiveLoan) {
@@ -926,9 +937,9 @@ final pieceEmpRes = await http.get(
                       'loan_date': selectedDate.toIso8601String(),
                     };
                     if (initial == null) {
-                      http.post(Uri.parse('http://127.0.0.1:8888/employees/loans'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
+                      http.post(Uri.parse(_loansUrl), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
                     } else {
-                      http.put(Uri.parse('http://127.0.0.1:8888/employees/loans/${initial['id']}'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
+                      http.put(Uri.parse('${globalServerUri.toString()}/employees/loans/${initial['id']}'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
                     }
                     Navigator.pop(context);
                     fetchDataSection();
@@ -1032,9 +1043,9 @@ final pieceEmpRes = await http.get(
                       'record_date': selectedDate.toIso8601String(),
                     };
                     if (initial == null) {
-                      http.post(Uri.parse('http://127.0.0.1:8888/employees/pieces'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
+                      http.post(Uri.parse(_piecesUrl), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
                     } else {
-                      http.put(Uri.parse('http://127.0.0.1:8888/employees/pieces/${initial['id']}'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
+                      http.put(Uri.parse('${globalServerUri.toString()}/employees/pieces/${initial['id']}'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
                     }
                     Navigator.pop(context);
                     fetchDataSection();
@@ -1051,12 +1062,12 @@ final pieceEmpRes = await http.get(
   }
 
   Future<void> deleteLoan(int id) async {
-    await http.delete(Uri.parse('http://127.0.0.1:8888/employees/loans/$id'));
+    await http.delete(Uri.parse('${globalServerUri.toString()}/employees/loans/$id'));
     await fetchDataSection();
   }
 
   Future<void> deletePiece(int id) async {
-    await http.delete(Uri.parse('http://127.0.0.1:8888/employees/pieces/$id'));
+    await http.delete(Uri.parse('${globalServerUri.toString()}/employees/pieces/$id'));
     await fetchDataSection();
   }
 
@@ -1124,9 +1135,9 @@ final pieceEmpRes = await http.get(
                       'debt_date': selectedDate.toIso8601String(),
                     };
                     if (initial == null) {
-                      http.post(Uri.parse('http://127.0.0.1:8888/employees/debts'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
+                      http.post(Uri.parse(_debtsUrl), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
                     } else {
-                      http.put(Uri.parse('http://127.0.0.1:8888/employees/debts/${initial['id']}'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
+                      http.put(Uri.parse('${globalServerUri.toString()}/employees/debts/${initial['id']}'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
                     }
                     Navigator.pop(context);
                     fetchDataSection();
@@ -1143,7 +1154,7 @@ final pieceEmpRes = await http.get(
   }
 
   Future<void> deleteDebt(int id) async {
-    await http.delete(Uri.parse('http://127.0.0.1:8888/employees/debts/$id'));
+    await http.delete(Uri.parse('${globalServerUri.toString()}/employees/debts/$id'));
     await fetchDataSection();
   }
 
@@ -1445,7 +1456,7 @@ final pieceEmpRes = await http.get(
                       );
                       if (result != null) {
                         await http.post(
-                          Uri.parse('http://127.0.0.1:8888/employees/attendance'),
+                          Uri.parse(_attendanceUrl),
                           headers: {'Content-Type': 'application/json'},
                           body: jsonEncode(result),
                         );
@@ -1565,7 +1576,7 @@ final pieceEmpRes = await http.get(
                                           );
                                           if (edited != null) {
                                             await http.put(
-                                              Uri.parse('http://127.0.0.1:8888/employees/attendance/${rec['attendance_id']}'),
+                                              Uri.parse('${globalServerUri.toString()}/employees/attendance/${rec['attendance_id']}'),
                                               headers: {'Content-Type': 'application/json'},
                                               body: jsonEncode(edited),
                                             );
@@ -1576,7 +1587,7 @@ final pieceEmpRes = await http.get(
                                       IconButton(
                                         icon: const Icon(Icons.delete, color: Colors.red),
                                         onPressed: () async {
-                                          await http.delete(Uri.parse('http://127.0.0.1:8888/employees/attendance/${rec['attendance_id']}'));
+                                          await http.delete(Uri.parse('${globalServerUri.toString()}/employees/attendance/${rec['attendance_id']}'));
                                           await fetchPresence();
                                         },
                                       ),

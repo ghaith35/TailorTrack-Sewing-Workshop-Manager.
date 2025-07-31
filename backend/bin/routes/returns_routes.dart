@@ -77,7 +77,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
   router.get('/<id>', (Request request, String id) async {
     try {
       final factureId = int.parse(id);
-      print('Fetching facture $factureId');
+      // print('Fetching facture $factureId');
 
       final factureResults = await db.query('''
         SELECT 
@@ -115,7 +115,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
         GROUP BY fi.id, m.name
       ''', substitutionValues: {'facture_id': factureId});
 
-      print('Facture items for $factureId: ${itemResults.length} items');
+      // print('Facture items for $factureId: ${itemResults.length} items');
 
       final facture = {
         'id': parseInt(factureResults.first[0]),
@@ -151,7 +151,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
   router.post('/', (Request request) async {
     try {
       final bodyString = await request.readAsString();
-      print('Creating return with payload: $bodyString');
+      // print('Creating return with payload: $bodyString');
       final body = jsonDecode(bodyString);
       
       final factureId = parseInt(body['facture_id']);
@@ -165,7 +165,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
           ? DateTime.parse(body['return_date'])
           : DateTime.now();
 
-      print('Parsed: factureId=$factureId, modelId=$modelId, quantity=$returnQuantity, repairMaterials=$repairMaterials, repairCost=$repairCost');
+      // print('Parsed: factureId=$factureId, modelId=$modelId, quantity=$returnQuantity, repairMaterials=$repairMaterials, repairCost=$repairCost');
 
       return await db.transaction((txn) async {
         if (factureId <= 0 || modelId <= 0 || returnQuantity <= 0) {
@@ -239,13 +239,13 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
   router.patch('/<id>/validate', (Request request, String id) async {
     try {
       final bodyString = await request.readAsString();
-      print('Validating return $id with payload: $bodyString');
+      // print('Validating return $id with payload: $bodyString');
 
       Map<String, dynamic> body;
       try {
         body = bodyString.isNotEmpty ? jsonDecode(bodyString) : {};
       } catch (e) {
-        print('Invalid JSON payload: $e');
+        // print('Invalid JSON payload: $e');
         return Response(400, body: jsonEncode({'error': 'Invalid JSON payload'}), headers: {'Content-Type': 'application/json'});
       }
 
@@ -254,7 +254,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
       final repairMaterials = (body['repair_materials'] as List?)?.cast<Map<String, dynamic>>() ?? [];
       final isReadyToSell = body['is_ready_to_sell'] as bool? ?? true;
 
-      print('Parsed: returnId=$returnId, repairCost=$repairCost, repairMaterials=$repairMaterials, isReadyToSell=$isReadyToSell');
+      // print('Parsed: returnId=$returnId, repairCost=$repairCost, repairMaterials=$repairMaterials, isReadyToSell=$isReadyToSell');
 
       return await db.transaction((txn) async {
         final returnExists = await txn.query('''
@@ -272,7 +272,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
         final quantity = parseInt(returnExists.first[2]);
         final factureId = parseInt(returnExists.first[3]);
 
-        print('Return details: modelId=$modelId, quantity=$quantity, factureId=$factureId');
+        // print('Return details: modelId=$modelId, quantity=$quantity, factureId=$factureId');
 
         // Update returns table
         final updateReturnResult = await txn.query('''
@@ -290,7 +290,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
           'repair_materials': jsonEncode(repairMaterials),
         });
 
-        print('Return $returnId updated: ${updateReturnResult.isNotEmpty}');
+        // print('Return $returnId updated: ${updateReturnResult.isNotEmpty}');
 
         // Insert repair_cost into expenses table if > 0
         if (repairCost > 0) {
@@ -305,9 +305,9 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
             'description': 'تكلفة إصلاح الإرجاع رقم $returnId',
             'amount': repairCost,
           });
-          print('Expense inserted for return $returnId: id=${expenseResult.isNotEmpty ? expenseResult.first[0] : 'none'}');
+          // print('Expense inserted for return $returnId: id=${expenseResult.isNotEmpty ? expenseResult.first[0] : 'none'}');
         } else {
-          print('No expense inserted: repairCost=$repairCost');
+          // print('No expense inserted: repairCost=$repairCost');
         }
 
         // Deduct repair materials from materials.stock_quantity
@@ -318,7 +318,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
             final materialQuantityPerUnit = parseNum(material['quantity']);
             final totalDeductionQuantity = quantity * materialQuantityPerUnit;
 
-            print('Processing material: materialId=$materialId, materialQuantityPerUnit=$materialQuantityPerUnit, totalDeductionQuantity=$totalDeductionQuantity');
+            // print('Processing material: materialId=$materialId, materialQuantityPerUnit=$materialQuantityPerUnit, totalDeductionQuantity=$totalDeductionQuantity');
 
             if (materialId <= 0 || materialQuantityPerUnit <= 0) {
               materialErrors.add('Invalid material_id ($materialId) or quantity ($materialQuantityPerUnit)');
@@ -351,10 +351,10 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
               'quantity': totalDeductionQuantity,
             });
 
-            print('Material $materialId updated: ${updateMaterialResult.isNotEmpty ? 'id=${updateMaterialResult.first[0]}' : 'none'}');
+            // print('Material $materialId updated: ${updateMaterialResult.isNotEmpty ? 'id=${updateMaterialResult.first[0]}' : 'none'}');
           }
         } else {
-          print('No materials to deduct: repairMaterials=$repairMaterials, quantity=$quantity');
+          // print('No materials to deduct: repairMaterials=$repairMaterials, quantity=$quantity');
         }
 
         // Add to warehouse if ready to sell
@@ -366,7 +366,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
             materialErrors.add('No ready warehouse found');
           } else {
             final warehouseId = parseInt(warehouseResults.first[0]);
-            print('Warehouse ID: $warehouseId');
+            // print('Warehouse ID: $warehouseId');
 
             final factureItemResults = await txn.query('''
               SELECT color
@@ -382,7 +382,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
               materialErrors.add('No facture item found for facture_id=$factureId, model_id=$modelId');
             } else {
               String? color = factureItemResults.first[0] as String?;
-              print('Color for inventory: $color');
+              // print('Color for inventory: $color');
 
               final inventoryResult = await txn.query('''
                 INSERT INTO sewing.product_inventory (
@@ -401,7 +401,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
                 'color': color ?? '',
               });
 
-              print('Inventory updated: ${inventoryResult.isNotEmpty ? 'id=${inventoryResult.first[0]}' : 'none'}');
+              // print('Inventory updated: ${inventoryResult.isNotEmpty ? 'id=${inventoryResult.first[0]}' : 'none'}');
             }
           }
         }
@@ -424,7 +424,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
         );
       });
     } catch (e, stackTrace) {
-      print('Error validating return $id: $e\n$stackTrace');
+      // print('Error validating return $id: $e\n$stackTrace');
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to validate return: $e'}),
         headers: {'Content-Type': 'application/json'},
@@ -503,7 +503,7 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
         'code': row[1] as String,
         'stock_quantity': parseNum(row[2]),
       }).toList();
-      print('Fetched materials: $materials');
+      // print('Fetched materials: $materials');
       return Response.ok(
         jsonEncode(materials),
         headers: {'Content-Type': 'application/json'},

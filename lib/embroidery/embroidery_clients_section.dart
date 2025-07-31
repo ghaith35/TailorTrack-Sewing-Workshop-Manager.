@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../main.dart';
 
 class EmbroideryClientsSection extends StatefulWidget {
   const EmbroideryClientsSection({super.key});
@@ -13,7 +14,7 @@ class _EmbroideryClientsSectionState extends State<EmbroideryClientsSection> {
   List<Map<String, dynamic>> _clients = [];
   List<Map<String, dynamic>> _filtered = [];
   final _searchController = TextEditingController();
-  final String _apiUrl = 'http://127.0.0.1:8888/embrodry/clients/';
+String get _apiUrl => '${globalServerUri.toString()}/embrodry/clients/';
 
   @override
   void initState() {

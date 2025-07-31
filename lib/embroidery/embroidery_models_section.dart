@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../main.dart';
 
 class EmbroideryModelsSection extends StatefulWidget {
   const EmbroideryModelsSection({Key? key}) : super(key: key);
@@ -11,7 +12,7 @@ class EmbroideryModelsSection extends StatefulWidget {
 
 class _EmbroideryModelsSectionState extends State<EmbroideryModelsSection> {
   static const double _sidebarWidth = 360;
-  final String baseUrl = 'http://127.0.0.1:8888/embrodry/models/';
+String get baseUrl => '${globalServerUri.toString()}/embrodry/models/';
 
   // state
   List<Map<String, dynamic>> _models   = [];

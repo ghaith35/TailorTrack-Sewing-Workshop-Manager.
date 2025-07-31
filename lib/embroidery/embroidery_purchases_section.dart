@@ -5,6 +5,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../main.dart';
 
 class EmbroideryPurchasesSection extends StatefulWidget {
   const EmbroideryPurchasesSection({super.key});
@@ -15,7 +16,7 @@ class EmbroideryPurchasesSection extends StatefulWidget {
 
 class _EmbroideryPurchasesSectionState extends State<EmbroideryPurchasesSection> {
   // ==================== CONFIG ====================
-  final String _baseUrl = 'http://127.0.0.1:8888/embrodry/purchases';
+String get _baseUrl => '${globalServerUri.toString()}/embrodry/purchases';
 
   // ==================== STATE =====================
   final TextEditingController _searchCtl = TextEditingController();

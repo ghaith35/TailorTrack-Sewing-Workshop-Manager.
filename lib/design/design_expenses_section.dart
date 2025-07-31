@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../main.dart';
 
 class DesignExpensesSection extends StatefulWidget {
   const DesignExpensesSection({super.key});
@@ -10,8 +11,8 @@ class DesignExpensesSection extends StatefulWidget {
 }
 
 class _DesignExpensesSectionState extends State<DesignExpensesSection> {
-  final String apiUrl        = 'http://127.0.0.1:8888/design/expenses/';
-  final String warehouseBase = 'http://127.0.0.1:8888/design/warehouse';
+  String get apiUrl => '${globalServerUri.toString()}/design/expenses/';
+String get warehouseBase => '${globalServerUri.toString()}/design/warehouse';
 
   // Data
   List expenses = [];

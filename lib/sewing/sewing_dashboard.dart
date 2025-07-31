@@ -10,6 +10,7 @@ import 'season_report_section.dart';
 import 'clients_section.dart';
 import 'purchases_section.dart';
 import 'sewing_returns_section.dart';
+import '../main.dart';
 
 class SewingDashboard extends StatefulWidget {
   final String role;

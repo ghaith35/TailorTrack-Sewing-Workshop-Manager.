@@ -3,6 +3,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../main.dart';
 
 class EmbroideryWarehouseSection extends StatefulWidget {
   const EmbroideryWarehouseSection({Key? key}) : super(key: key);
@@ -19,8 +20,8 @@ class _EmbroideryWarehouseSectionState
   final _tabs = const ['المخزون الجاهز', 'المواد الخام'];
 
   // ── Endpoints ───────────────────────────────────────────────
-  final String _modelsBase    = 'http://127.0.0.1:8888/embrodry/models';
-  final String _warehouseBase = 'http://127.0.0.1:8888/embrodry/warehouse';
+  String get _modelsBase => '${globalServerUri.toString()}/embrodry/models';
+String get _warehouseBase => '${globalServerUri.toString()}/embrodry/warehouse';
 
   // ── Helpers ─────────────────────────────────────────────────
   String s(dynamic v) => v == null ? '—' : v.toString();

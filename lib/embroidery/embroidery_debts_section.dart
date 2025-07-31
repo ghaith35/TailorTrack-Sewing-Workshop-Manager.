@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../main.dart';
 
 class EmbroideryDebtsSection extends StatefulWidget {
   const EmbroideryDebtsSection({Key? key}) : super(key: key);
@@ -73,7 +74,7 @@ class _EmbroideryDebtsSectionState extends State<EmbroideryDebtsSection> {
     },
   };
 
-  final String baseUrl = 'http://127.0.0.1:8888/embrodry';
+String get baseUrl => '${globalServerUri.toString()}/embrodry';
 
   @override
   void initState() {

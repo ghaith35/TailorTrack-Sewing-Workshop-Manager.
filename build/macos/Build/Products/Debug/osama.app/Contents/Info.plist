@@ -51,10 +51,12 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
-	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2025 com.example. All rights reserved.</string>
-	<key>NSMainNibFile</key>
-	<string>MainMenu</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_udp._broadcast</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>يحتاج التطبيق للوصول إلى الخادم على الشبكة المحلية</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

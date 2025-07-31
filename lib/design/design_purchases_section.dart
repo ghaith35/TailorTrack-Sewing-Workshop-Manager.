@@ -5,6 +5,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../main.dart';
 
 class DesignPurchasesSection extends StatefulWidget {
   const DesignPurchasesSection({super.key});
@@ -15,7 +16,7 @@ class DesignPurchasesSection extends StatefulWidget {
 
 class _DesignPurchasesSectionState extends State<DesignPurchasesSection> {
   // ==================== CONFIG ====================
-  final String _baseUrl = 'http://127.0.0.1:8888/design/purchases';
+String get _baseUrl => '${globalServerUri.toString()}/design/purchases';
 
   // ==================== STATE =====================
   final TextEditingController _searchCtl = TextEditingController();

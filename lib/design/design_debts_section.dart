@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../main.dart';
 
 class DesignDebtsSection extends StatefulWidget {
   const DesignDebtsSection({super.key});
@@ -75,7 +76,7 @@ class _DesignDebtsSectionState extends State<DesignDebtsSection> {
 
 
   // BASE URL
-  final String baseUrl = 'http://localhost:8888/design/debts';
+String get baseUrl => '${globalServerUri.toString()}/design/debts';
 
   @override
   void initState() {

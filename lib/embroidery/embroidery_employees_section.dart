@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import '../main.dart';
 
 class EmbroideryEmployeesSection extends StatefulWidget {
   const EmbroideryEmployeesSection({super.key});
@@ -17,6 +18,7 @@ class _EmbroideryEmployeesSectionState extends State<EmbroideryEmployeesSection>
   int attType = 0;
   int selectedDataTab = 0;
   int selectedSalariesTab = 0;
+String get _apiUrl => '${globalServerUri.toString()}/embroidery-employees/';
 
   // Attendance year/month selection
   List<int> _availableYears = [];
@@ -199,7 +201,8 @@ int?     selectedDay;
   Future<void> fetchEmployees() async {
     setState(() => isLoading = true);
     try {
-      final response = await http.get(Uri.parse('http://127.0.0.1:8888/embroidery-employees/'));
+      final response = await http.get(Uri.parse('$_apiUrl'
+));
       if (response.statusCode == 200) {
         setState(() {
           employees = jsonDecode(response.body);
@@ -216,7 +219,7 @@ int?     selectedDay;
   Future<void> _fetchAttendanceYears() async {
     try {
       final res = await http.get(Uri.parse(
-          'http://127.0.0.1:8888/embroidery-employees/attendance/years?type=${attType == 0 ? "monthly" : "piece"}'));
+          '${_apiUrl}attendance/years?type=${attType == 0 ? "monthly" : "piece"}'));
       if (res.statusCode == 200) {
         setState(() {
           _availableYears = (jsonDecode(res.body) as List).cast<int>();
@@ -237,7 +240,7 @@ int?     selectedDay;
     if (selectedYear == null) return;
     try {
       final res = await http.get(Uri.parse(
-          'http://127.0.0.1:8888/embroidery-employees/attendance/months?year=$selectedYear&type=${attType == 0 ? "monthly" : "piece"}'));
+          '${_apiUrl}attendance/months?year=$selectedYear&type=${attType == 0 ? "monthly" : "piece"}'));
       if (res.statusCode == 200) {
         setState(() {
           _availableMonths = (jsonDecode(res.body) as List).cast<String>();
@@ -253,29 +256,32 @@ int?     selectedDay;
   }
 
   Future<void> fetchAttendance() async {
-    if (selectedYearMonth == null) return;
-    setState(() {
-      attLoading = true;
-      attEmployees = [];
-      selectedEmployeeId = null;
-    });
-    final url = attType == 0
-        ? 'http://127.0.0.1:8888/embroidery-employees/attendance/monthly?month=$selectedYearMonth'
-        : 'http://127.0.0.1:8888/embroidery-employees/attendance/piece?month=$selectedYearMonth';
-    try {
-      final res = await http.get(Uri.parse(url));
-      if (res.statusCode == 200) {
-        setState(() {
-          attEmployees = jsonDecode(res.body);
-          selectedEmployeeId = attEmployees.isNotEmpty ? attEmployees.first['employee_id'] : null;
-        });
-      }
-    } catch (e) {
-      print('Error fetching attendance: $e');
-    } finally {
-      setState(() => attLoading = false);
+  if (selectedYearMonth == null) return;
+  setState(() {
+    attLoading = true;
+    attEmployees = [];
+    selectedEmployeeId = null;
+  });
+
+  final url = attType == 0
+      ? '${_apiUrl}attendance/monthly?month=$selectedYearMonth'
+      : '${_apiUrl}attendance/piece?month=$selectedYearMonth';
+
+  try {
+    final res = await http.get(Uri.parse(url));
+    if (res.statusCode == 200) {
+      setState(() {
+        attEmployees = jsonDecode(res.body);
+        selectedEmployeeId = attEmployees.isNotEmpty ? attEmployees.first['employee_id'] : null;
+      });
     }
+  } catch (e) {
+    print('Error fetching attendance: $e');
+  } finally {
+    setState(() => attLoading = false);
   }
+}
+
 
   /// 3.1 Rebuild the list of days whenever month changes
 void _rebuildDays() {
@@ -337,22 +343,23 @@ Future<void> fetchPresence() async {
   Future<void> fetchDataSection() async {
     setState(() => isDataLoading = true);
     try {
-      final empRes = await http.get(Uri.parse('http://127.0.0.1:8888/embroidery-employees/'));
+      final empRes = await http.get(Uri.parse('$_apiUrl'
+));
       allEmployees = empRes.statusCode == 200 ? jsonDecode(empRes.body) : [];
       pieceEmployees = allEmployees.where((e) => e['payment_type'] == 'stitchly').toList();
 
-      final modelRes = await http.get(Uri.parse('http://127.0.0.1:8888/embroidery-employees/models'));
+      final modelRes = await http.get(Uri.parse('$_apiUrl/models'));
       allModels = modelRes.statusCode == 200 ? jsonDecode(modelRes.body) : [];
 
-      final loanRes = await http.get(Uri.parse('http://127.0.0.1:8888/embroidery-employees/loans'));
+      final loanRes = await http.get(Uri.parse('$_apiUrl/loans'));
       loans = loanRes.statusCode == 200 ? jsonDecode(loanRes.body) : [];
       _filteredLoans = loans;
 
-      final pieceRes = await http.get(Uri.parse('http://127.0.0.1:8888/embroidery-employees/pieces'));
+      final pieceRes = await http.get(Uri.parse('$_apiUrl/pieces'));
       pieces = pieceRes.statusCode == 200 ? jsonDecode(pieceRes.body) : [];
       _filteredPieces = pieces;
 
-      final debtRes = await http.get(Uri.parse('http://127.0.0.1:8888/embroidery-employees/debts'));
+      final debtRes = await http.get(Uri.parse('$_apiUrl/debts'));
       debts = debtRes.statusCode == 200 ? jsonDecode(debtRes.body) : [];
       _filteredDebts = debts;
     } catch (e) {
@@ -364,8 +371,8 @@ Future<void> fetchPresence() async {
 
   Future<void> _fetchSalaryYears() async {
     try {
-      final monthlyRes = await http.get(Uri.parse('http://127.0.0.1:8888/embroidery-employees/attendance/years?type=monthly'));
-      final pieceRes = await http.get(Uri.parse('http://127.0.0.1:8888/embroidery-employees/attendance/years?type=piece'));
+      final monthlyRes = await http.get(Uri.parse('${_apiUrl}attendance/years?type=monthly'));
+      final pieceRes = await http.get(Uri.parse('${_apiUrl}attendance/years?type=piece'));
       Set<int> allYears = {};
       if (monthlyRes.statusCode == 200) allYears.addAll((jsonDecode(monthlyRes.body) as List).cast<int>());
       if (pieceRes.statusCode == 200) allYears.addAll((jsonDecode(pieceRes.body) as List).cast<int>());
@@ -387,7 +394,7 @@ Future<void> fetchPresence() async {
     try {
       final type = selectedSalariesTab == 0 ? 'monthly' : 'piece';
       final res = await http.get(Uri.parse(
-          'http://127.0.0.1:8888/embroidery-employees/attendance/months?year=$selectedSalaryYear&type=$type'));
+          '${_apiUrl}attendance/months?year=$selectedSalaryYear&type=$type'));
       if (res.statusCode == 200) {
         setState(() {
           _salaryMonths = (jsonDecode(res.body) as List).cast<String>();
@@ -407,15 +414,15 @@ Future<void> fetchPresence() async {
     setState(() => salaryLoading = true);
     try {
       final monthlyRes = await http.get(Uri.parse(
-          'http://127.0.0.1:8888/embroidery-employees/attendance/monthly?month=$selectedSalaryMonth'));
+          '${_apiUrl}attendance/monthly?month=$selectedSalaryMonth'));
       monthlyAttendance = monthlyRes.statusCode == 200 ? jsonDecode(monthlyRes.body) : [];
 
       final pieceRes = await http.get(Uri.parse(
-          'http://127.0.0.1:8888/embroidery-employees/attendance/piece?month=$selectedSalaryMonth'));
+          '$_apiUrl/attendance/piece?month=$selectedSalaryMonth'));
       pieceAttendance = pieceRes.statusCode == 200 ? jsonDecode(pieceRes.body) : [];
 
       final loanRes = await http.get(Uri.parse(
-          'http://127.0.0.1:8888/embroidery-employees/loans/monthly-summary?month=$selectedSalaryMonth'));
+          '$_apiUrl/loans/monthly-summary?month=$selectedSalaryMonth'));
       loanData = {};
       if (loanRes.statusCode == 200) {
         final decoded = jsonDecode(loanRes.body) as Map<String, dynamic>;
@@ -430,7 +437,7 @@ Future<void> fetchPresence() async {
       }
 
       final debtRes = await http.get(Uri.parse(
-          'http://127.0.0.1:8888/embroidery-employees/debts/monthly-summary?month=$selectedSalaryMonth'));
+          '$_apiUrl/debts/monthly-summary?month=$selectedSalaryMonth'));
       Map<int, num> debtData = {};
       if (debtRes.statusCode == 200) {
         final decoded = jsonDecode(debtRes.body) as Map<String, dynamic>;
@@ -597,7 +604,7 @@ final List<Map<String, dynamic>> rows = [];
 
     try {
       final response = await http.post(
-        Uri.parse('http://127.0.0.1:8888/embroidery-employees/attendance/bulk'),
+        Uri.parse('$_apiUrl/attendance/bulk'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(attendanceRecords),
       );
@@ -647,13 +654,13 @@ Future<void> _fetchAvailableDays() async {
       try {
         if (initial == null) {
           await http.post(
-            Uri.parse('http://127.0.0.1:8888/embroidery-employees/'),
+            Uri.parse('$_apiUrl'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(result),
           );
         } else {
           await http.put(
-            Uri.parse('http://127.0.0.1:8888/embroidery-employees/${initial['id']}'),
+            Uri.parse('$_apiUrl/${initial['id']}'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(result),
           );
@@ -684,7 +691,7 @@ Future<void> _fetchAvailableDays() async {
       ),
     );
     if (ok == true) {
-      await http.delete(Uri.parse('http://127.0.0.1:8888/embroidery-employees/$id'));
+      await http.delete(Uri.parse('${_apiUrl}$id'));
       await fetchEmployees();
     }
   }
@@ -701,7 +708,7 @@ Future<void> _fetchAvailableDays() async {
   bool hasActiveLoan = false;
   if (employeeId != null && initial == null) {
     final checkRes = await http.get(Uri.parse(
-      'http://127.0.0.1:8888/embroidery-employees/loans/check/$employeeId'));
+      '$_apiUrl/loans/check/$employeeId'));
     if (checkRes.statusCode == 200) {
       final data = jsonDecode(checkRes.body);
       hasActiveLoan = data['has_active_loan'] ?? false;
@@ -733,7 +740,7 @@ Future<void> _fetchAvailableDays() async {
                   // re–check active loan if selecting new employee
                   if (v != null && initial == null) {
                     final resp = await http.get(Uri.parse(
-                      'http://127.0.0.1:8888/embroidery-employees/loans/check/$v'));
+                      '$_apiUrl/loans/check/$v'));
                     if (resp.statusCode == 200) {
                       final d = jsonDecode(resp.body);
                       setState(() => hasActiveLoan = d['has_active_loan'] ?? false);
@@ -840,14 +847,14 @@ Future<void> _fetchAvailableDays() async {
               // send to server
               if (initial == null) {
                 await http.post(
-                  Uri.parse('http://127.0.0.1:8888/embroidery-employees/loans'),
+                  Uri.parse('$_apiUrl/loans'),
                   headers: {'Content-Type': 'application/json'},
                   body: jsonEncode(data),
                 );
               } else {
                 await http.put(
                   Uri.parse(
-                    'http://127.0.0.1:8888/embroidery-employees/loans/${initial!['id']}'),
+                    '$_apiUrl/loans/${initial!['id']}'),
                   headers: {'Content-Type': 'application/json'},
                   body: jsonEncode(data),
                 );
@@ -866,7 +873,7 @@ Future<void> _fetchAvailableDays() async {
 
 
   Future<void> deleteLoan(int id) async {
-    await http.delete(Uri.parse('http://127.0.0.1:8888/embroidery-employees/loans/$id'));
+    await http.delete(Uri.parse('$_apiUrl/loans/$id'));
     await fetchDataSection();
   }
 
@@ -993,13 +1000,13 @@ Future<void> _fetchAvailableDays() async {
               // 3) Send to server
               if (initial == null) {
                 await http.post(
-                  Uri.parse('http://127.0.0.1:8888/embroidery-employees/pieces'),
+                  Uri.parse('$_apiUrl/pieces'),
                   headers: {'Content-Type': 'application/json'},
                   body: jsonEncode(data),
                 );
               } else {
                 await http.put(
-                  Uri.parse('http://127.0.0.1:8888/embroidery-employees/pieces/${initial!['id']}'),
+                  Uri.parse('$_apiUrl/pieces/${initial!['id']}'),
                   headers: {'Content-Type': 'application/json'},
                   body: jsonEncode(data),
                 );
@@ -1019,7 +1026,7 @@ Future<void> _fetchAvailableDays() async {
 
 
   Future<void> deletePiece(int id) async {
-    await http.delete(Uri.parse('http://127.0.0.1:8888/embroidery-employees/pieces/$id'));
+    await http.delete(Uri.parse('$_apiUrl/pieces/$id'));
     await fetchDataSection();
   }
 
@@ -1114,14 +1121,14 @@ Future<void> _fetchAvailableDays() async {
               // 3) Send to backend
               if (initial == null) {
                 await http.post(
-                  Uri.parse('http://127.0.0.1:8888/embroidery-employees/debts'),
+                  Uri.parse('$_apiUrl/debts'),
                   headers: {'Content-Type': 'application/json'},
                   body: jsonEncode(data),
                 );
               } else {
                 await http.put(
                   Uri.parse(
-                    'http://127.0.0.1:8888/embroidery-employees/debts/${initial!['id']}'),
+                    '$_apiUrl/debts/${initial!['id']}'),
                   headers: {'Content-Type': 'application/json'},
                   body: jsonEncode(data),
                 );
@@ -1140,7 +1147,7 @@ Future<void> _fetchAvailableDays() async {
 }
 
   Future<void> deleteDebt(int id) async {
-    await http.delete(Uri.parse('http://127.0.0.1:8888/embroidery-employees/debts/$id'));
+    await http.delete(Uri.parse('$_apiUrl/debts/$id'));
     await fetchDataSection();
   }
 
@@ -1716,7 +1723,7 @@ Future<void> _fetchAvailableDays() async {
                   );
                   if (result != null) {
                     await http.post(
-                      Uri.parse('http://127.0.0.1:8888/embroidery-employees/attendance'),
+                      Uri.parse('${_apiUrl}attendance'),
                       headers: {'Content-Type': 'application/json'},
                       body: jsonEncode(result),
                     );
@@ -1843,7 +1850,7 @@ Future<void> _fetchAvailableDays() async {
                                           );
                                           if (edited != null) {
                                             await http.put(
-                                              Uri.parse('http://127.0.0.1:8888/embroidery-employees/attendance/${rec['attendance_id']}'),
+                                              Uri.parse('$_apiUrl/attendance/${rec['attendance_id']}'),
                                               headers: {'Content-Type': 'application/json'},
                                               body: jsonEncode(edited),
                                             );
@@ -1854,7 +1861,7 @@ Future<void> _fetchAvailableDays() async {
                                       IconButton(
                                         icon: const Icon(Icons.delete, color: Colors.red),
                                         onPressed: () async {
-                                          await http.delete(Uri.parse('http://127.0.0.1:8888/embroidery-employees/attendance/${rec['attendance_id']}'));
+                                          await http.delete(Uri.parse('$_apiUrl/attendance/${rec['attendance_id']}'));
                                           await fetchPresence();
                                         },
                                       ),

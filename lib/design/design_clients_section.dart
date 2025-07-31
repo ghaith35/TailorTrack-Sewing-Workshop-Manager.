@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../main.dart';
 
 class DesignClientsSection extends StatefulWidget {
   const DesignClientsSection({super.key});
@@ -10,7 +11,7 @@ class DesignClientsSection extends StatefulWidget {
 }
 
 class _DesignClientsSectionState extends State<DesignClientsSection> {
-  final String _apiUrl = 'http://127.0.0.1:8888/design/clients/';
+String get _apiUrl => '${globalServerUri.toString()}/design/clients/';
   final _searchController = TextEditingController();
 
   List<Map<String, dynamic>> _clients = [];

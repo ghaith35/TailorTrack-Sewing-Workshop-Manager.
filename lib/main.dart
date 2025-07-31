@@ -1,14 +1,59 @@
 // lib/main.dart
 
+import 'dart:io';
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
 
 import 'sewing/sewing_dashboard.dart';
 import 'embroidery/embroidery_dashboard.dart';
 import 'design/design_dashboard.dart';
+
+/// Holds the discovered server URI (e.g. http://192.168.0.10:8888)
+Uri? globalServerUri;
+
+/// Listens for your server's UDP broadcasts on port 9999.
+class ServerDiscovery {
+  RawDatagramSocket? _socket;
+  final _controller = StreamController<Uri>.broadcast();
+
+  Future<void> start() async {
+    _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 9999);
+    _socket!
+      ..broadcastEnabled = true
+      ..listen(_onData);
+  }
+
+  void _onData(RawSocketEvent event) {
+    if (event != RawSocketEvent.read) return;
+    final dg = _socket!.receive();
+    if (dg == null) return;
+
+    final msg = utf8.decode(dg.data);
+    if (!msg.startsWith('SEWING_SERVER:')) return;
+
+    final parts = msg.split(':');
+    if (parts.length < 2) return;
+
+    final port = parts[1];
+    final ip   = dg.address.address;
+    final uri  = Uri.parse('http://$ip:$port');
+
+    globalServerUri = uri;
+    _controller.add(uri);
+  }
+
+  Stream<Uri> get onServerFound => _controller.stream;
+
+  void dispose() {
+    _socket?.close();
+    _controller.close();
+  }
+}
 
 void main() => runApp(const MyApp());
 
@@ -20,12 +65,15 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   String? _token, _role;
-  bool _loading = true;
+  bool _loading     = true;
+  bool _discovering = true;
+  late ServerDiscovery _disc;
 
   @override
   void initState() {
     super.initState();
     _loadAuth();
+    _startDiscovery();
   }
 
   Future<void> _loadAuth() async {
@@ -34,6 +82,16 @@ class _MyAppState extends State<MyApp> {
       _token   = prefs.getString('auth_token');
       _role    = prefs.getString('auth_role');
       _loading = false;
+    });
+  }
+
+  Future<void> _startDiscovery() async {
+    _disc = ServerDiscovery();
+    await _disc.start();
+    // once we get the first broadcast, stop showing the spinner
+    _disc.onServerFound.first.then((_) {
+      if (!mounted) return;
+      setState(() => _discovering = false);
     });
   }
 
@@ -55,8 +113,15 @@ class _MyAppState extends State<MyApp> {
   }
 
   @override
+  void dispose() {
+    _disc.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (_loading) {
+    // wait for both auth _and_ server discovery
+    if (_loading || _discovering || globalServerUri == null) {
       return const MaterialApp(
         home: Scaffold(body: Center(child: CircularProgressIndicator())),
       );
@@ -84,14 +149,14 @@ class _MyAppState extends State<MyApp> {
           ? LoginPage(onLogin: _onLogin)
           : HomePage(role: _role!, onLogout: _onLogout),
       routes: {
-        '/login': (ctx) => LoginPage(onLogin: _onLogin),
-        '/home': (ctx) => HomePage(role: _role!, onLogout: _onLogout),
-        '/sewing': (ctx) => SewingDashboard(role: _role!),
-        '/embroidery': (ctx) => EmbroideryDashboard(role: _role!),
-        '/design': (ctx) => const DesignDashboard(),
-        '/manage-users': (ctx) => _token == null
-            ? const ErrorScreen('Unauthorized access')
-            : ManageUsersPage(token: _token!, role: _role!),
+        '/login':       (ctx) => LoginPage(onLogin: _onLogin),
+        '/home':        (ctx) => HomePage(role: _role!, onLogout: _onLogout),
+        '/sewing':      (ctx) => SewingDashboard(role: _role!),
+        '/embroidery':  (ctx) => EmbroideryDashboard(role: _role!),
+        '/design':      (ctx) => const DesignDashboard(),
+        '/manage-users':(ctx) => _token == null
+                             ? const ErrorScreen('Unauthorized access')
+                             : ManageUsersPage(token: _token!, role: _role!),
       },
     );
   }
@@ -117,7 +182,7 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   String _user = '', _pass = '';
-  String? _err; 
+  String? _err;
   bool _loading = false;
 
   Future<void> _submit() async {
@@ -125,11 +190,13 @@ class _LoginPageState extends State<LoginPage> {
     _formKey.currentState!.save();
     setState(() {
       _loading = true;
-      _err = null;
+      _err     = null;
     });
+
+    final base = globalServerUri!;
     try {
       final resp = await http.post(
-        Uri.parse('http://localhost:8888/auth/login'),
+        Uri.parse('${base.toString()}/auth/login'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'username': _user, 'password': _pass}),
       );
@@ -325,8 +392,9 @@ class _ManageUsersPageState extends State<ManageUsersPage> {
   Future<void> _fetchUsers() async {
     setState(() => loading = true);
     final rolesQuery = widget.role == 'Admin' ? '?roles=Manager,Accountant' : '';
+    final base       = globalServerUri!;
     final resp = await http.get(
-      Uri.parse('http://localhost:8888/auth/admin/users$rolesQuery'),
+      Uri.parse('${base.toString()}/auth/admin/users$rolesQuery'),
       headers: await _authHeader,
     );
     if (resp.statusCode == 200) {
@@ -376,8 +444,9 @@ class _ManageUsersPageState extends State<ManageUsersPage> {
             ElevatedButton(
               onPressed: usernameCtl.text.isNotEmpty && passwordCtl.text.isNotEmpty
                   ? () async {
+                      final base = globalServerUri!;
                       final resp = await http.post(
-                        Uri.parse('http://localhost:8888/auth/admin/users'),
+                        Uri.parse('${base.toString()}/auth/admin/users'),
                         headers: await _authHeader,
                         body: jsonEncode({
                           'username': usernameCtl.text.trim(),
@@ -416,8 +485,9 @@ class _ManageUsersPageState extends State<ManageUsersPage> {
             ElevatedButton(
               onPressed: newPassCtl.text.isNotEmpty
                   ? () async {
+                      final base = globalServerUri!;
                       final resp = await http.post(
-                        Uri.parse('http://localhost:8888/auth/admin/users/$userId/reset-password'),
+                        Uri.parse('${base.toString()}/auth/admin/users/$userId/reset-password'),
                         headers: await _authHeader,
                         body: jsonEncode({'newPassword': newPassCtl.text}),
                       );
@@ -450,8 +520,9 @@ class _ManageUsersPageState extends State<ManageUsersPage> {
       ),
     );
     if (ok != true) return;
+    final base = globalServerUri!;
     final resp = await http.delete(
-      Uri.parse('http://localhost:8888/auth/admin/users/$userId'),
+      Uri.parse('${base.toString()}/auth/admin/users/$userId'),
       headers: await _authHeader,
     );
     if (resp.statusCode == 200) _fetchUsers();

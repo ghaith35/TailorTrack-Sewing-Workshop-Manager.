@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 import 'dart:typed_data';
+import '../main.dart';
 
 class SewingModelsSection extends StatefulWidget {
   final String userRole;
@@ -29,7 +30,7 @@ class _SewingModelsSectionState extends State<SewingModelsSection> {
 
   List<dynamic> inProductionBatches = [];
 
-  final String baseUrl = 'http://localhost:8888';
+String get baseUrl => '${globalServerUri.toString()}';
 
   List<String> get availableTabs {
     return widget.userRole == "Accountant"

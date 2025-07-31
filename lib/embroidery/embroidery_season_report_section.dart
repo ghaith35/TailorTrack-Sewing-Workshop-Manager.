@@ -11,6 +11,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../main.dart';
 
 class EmbroiderySeasonReportSection extends StatefulWidget {
   const EmbroiderySeasonReportSection({Key? key}) : super(key: key);
@@ -21,7 +22,7 @@ class EmbroiderySeasonReportSection extends StatefulWidget {
 
 class _EmbroiderySeasonReportSectionState extends State<EmbroiderySeasonReportSection> {
   // ================== CONFIG ==================
-  final String baseUrl = 'http://localhost:8888/embrodry';
+String get baseUrl => '${globalServerUri.toString()}/embrodry';
   static const double kDonutHeight = 300;
   static const double _sidebarWidth = 400;
 

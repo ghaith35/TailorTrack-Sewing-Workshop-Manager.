@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../main.dart';
 
 class EmbroideryReturnsSection extends StatefulWidget {
   const EmbroideryReturnsSection({super.key});
@@ -25,7 +26,7 @@ class _EmbroideryReturnsSectionState extends State<EmbroideryReturnsSection> {
   String? selectedMonth;
 
   // API base URL
-  final String baseUrl = 'http://localhost:8888/embrodry/returns/';
+String get baseUrl => '${globalServerUri.toString()}/embrodry/returns/';
 
   @override
   void initState() {

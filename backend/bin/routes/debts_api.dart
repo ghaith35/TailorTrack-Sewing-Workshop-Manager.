@@ -423,7 +423,7 @@ Router getDebtsRoutes(PostgreSQLConnection db) {
 router.post('/clients/<id>/deposit/use', (Request req, String id) async {
   try {
     final bodyRaw = await req.readAsString();
-    print('>>> /deposit/use body: $bodyRaw');
+    // print('>>> /deposit/use body: $bodyRaw');
     final body = jsonDecode(bodyRaw) as Map<String, dynamic>;
 
     if (!body.containsKey('amount')) {

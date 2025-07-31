@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import '../main.dart';
 
 class SewingPurchasesSection extends StatefulWidget {
   const SewingPurchasesSection({super.key});
@@ -10,7 +11,7 @@ class SewingPurchasesSection extends StatefulWidget {
 }
 
 class _SewingPurchasesSectionState extends State<SewingPurchasesSection> {
-  final String _baseUrl = 'http://localhost:8888/purchases';
+String get _baseUrl => '${globalServerUri.toString()}/purchases';
 
   List<Map<String, dynamic>> _purchases = [];
   List<Map<String, dynamic>> _filtered = [];

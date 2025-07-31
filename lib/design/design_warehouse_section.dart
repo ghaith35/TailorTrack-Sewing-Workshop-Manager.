@@ -1,7 +1,7 @@
-// lib/design/design_warehouse_section.dart
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../main.dart';
 
 class DesignWarehouseSection extends StatefulWidget {
   const DesignWarehouseSection({Key? key}) : super(key: key);
@@ -16,7 +16,7 @@ class _DesignWarehouseSectionState extends State<DesignWarehouseSection> {
   final _tabs = const ['المخزون الجاهز', 'المواد الخام'];
 
   // ========= CONFIG =========
-  final String baseUrl = 'http://localhost:8888/design';
+String get baseUrl => '${globalServerUri.toString()}/design';
   String s(dynamic v) => v == null ? '—' : v.toString();
   double n(dynamic v) =>
       v is num ? v.toDouble() : (double.tryParse(v?.toString() ?? '') ?? 0);

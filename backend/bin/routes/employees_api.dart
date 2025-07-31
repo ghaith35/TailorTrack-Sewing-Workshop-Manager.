@@ -4,7 +4,7 @@ import 'package:postgres/postgres.dart';
 import 'dart:convert';
 
 Router getEmployeesRoutes(PostgreSQLConnection db) {
-  print('Employees API: Initializing routes');
+  // print('Employees API: Initializing routes');
   final router = Router();
 
   // Get all active employees
@@ -153,7 +153,7 @@ Router getEmployeesRoutes(PostgreSQLConnection db) {
     final startDate = formatDate(firstDay);
     final endDate = formatDate(lastDay);
 
-    print('Attendance Query: $startDate to $endDate');
+    // print('Attendance Query: $startDate to $endDate');
 
     final result = await db.mappedResultsQuery('''
       SELECT employees.*, employee_attendance.*
@@ -167,7 +167,7 @@ Router getEmployeesRoutes(PostgreSQLConnection db) {
       'end': endDate,
     });
 
-    print('RAW RESULT: $result');
+    // print('RAW RESULT: $result');
 
     // Group by employee
     Map<int, dynamic> employees = {};
@@ -215,7 +215,7 @@ Router getEmployeesRoutes(PostgreSQLConnection db) {
     final startDate = formatDate(firstDay);
     final endDate = formatDate(lastDay);
 
-    print('Piece Attendance Query: $startDate to $endDate');
+    // print('Piece Attendance Query: $startDate to $endDate');
 
     final result = await db.mappedResultsQuery('''
       SELECT employees.*, piece_records.*, models.name as model_name
@@ -230,7 +230,7 @@ Router getEmployeesRoutes(PostgreSQLConnection db) {
       'end': endDate,
     });
 
-    print('RAW PIECE RESULT: $result');
+    // print('RAW PIECE RESULT: $result');
 
     // Group by employee
     Map<int, dynamic> employees = {};

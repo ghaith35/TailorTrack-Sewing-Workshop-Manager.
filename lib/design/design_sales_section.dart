@@ -11,9 +11,10 @@ import 'package:http/http.dart' as http;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import '../main.dart';
 
 /// ===================== CONFIG =====================
-const String kBaseUrl = 'http://localhost:8888/design/sales'; // << adjust if needed
+String get kBaseUrl => '${globalServerUri.toString()}/design/sales';
 
 /// ===================== HELPERS =====================
 void showSnack(BuildContext ctx, String msg, {Color? color}) {

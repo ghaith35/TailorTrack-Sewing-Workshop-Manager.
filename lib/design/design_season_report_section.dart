@@ -12,6 +12,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../main.dart';
 
 class DesignSeasonReportSection extends StatefulWidget {
   const DesignSeasonReportSection({Key? key}) : super(key: key);
@@ -22,7 +23,7 @@ class DesignSeasonReportSection extends StatefulWidget {
 
 class _DesignSeasonReportSectionState extends State<DesignSeasonReportSection> {
   // ================== CONFIG ==================
-  final String baseUrl = 'http://localhost:8888/design';
+String get baseUrl => '${globalServerUri.toString()}/design';
   static const double kDonutHeight = 300;
   static const double _sidebarWidth = 400;
 

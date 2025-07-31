@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../main.dart';
 
 class DebtsSection extends StatefulWidget {
   final String role;
@@ -85,7 +86,7 @@ class _DebtsSectionState extends State<DebtsSection> {
     },
   };
 
-  final String baseUrl = 'http://localhost:8888';
+String get baseUrl => '${globalServerUri.toString()}';
 
   @override
   void initState() {

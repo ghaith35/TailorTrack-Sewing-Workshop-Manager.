@@ -11,6 +11,7 @@ import 'design_debts_section.dart';
 import 'design_suppliers_section.dart';
 // import 'design_returns_section.dart';
 // import 'design_production_section.dart'; // ← optional if you expose production batches
+import '../main.dart';
 
 class DesignDashboard extends StatefulWidget {
   const DesignDashboard({super.key});
