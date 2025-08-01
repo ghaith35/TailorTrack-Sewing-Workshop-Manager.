@@ -1,67 +1,75 @@
 // lib/main.dart
 
-import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:basic_utils/basic_utils.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
-import 'package:crypto/crypto.dart';
-import 'package:basic_utils/basic_utils.dart';
 import 'package:pointycastle/export.dart' as pc;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'sewing/sewing_dashboard.dart';
 import 'embroidery/embroidery_dashboard.dart';
 import 'design/design_dashboard.dart';
 
-/// Holds the discovered server URI (e.g. http://192.168.0.10:8888)
-Uri? globalServerUri;
+/// ─────────────────────────────────────────────────
+/// 1) CROSS-PLATFORM DEVICE CODE
+/// ─────────────────────────────────────────────────
 
-/// Listens for your server's UDP broadcasts on port 9999.
-class ServerDiscovery {
-  RawDatagramSocket? _socket;
-  final _controller = StreamController<Uri>.broadcast();
-
-  Future<void> start() async {
-    _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 9999);
-    _socket!
-      ..broadcastEnabled = true
-      ..listen(_onData);
-  }
-
-  void _onData(RawSocketEvent event) {
-    if (event != RawSocketEvent.read) return;
-    final dg = _socket!.receive();
-    if (dg == null) return;
-
-    final msg = utf8.decode(dg.data);
-    if (!msg.startsWith('SEWING_SERVER:')) return;
-
-    final parts = msg.split(':');
-    if (parts.length < 2) return;
-
-    final port = parts[1];
-    final ip   = dg.address.address;
-    final uri  = Uri.parse('http://$ip:$port');
-
-    globalServerUri = uri;
-    _controller.add(uri);
-  }
-
-  Stream<Uri> get onServerFound => _controller.stream;
-
-  void dispose() {
-    _socket?.close();
-    _controller.close();
+Future<String> _readRawMachineId() async {
+  if (Platform.isWindows) {
+    final result = await Process.run('reg', [
+      'query',
+      r'HKLM\SOFTWARE\Microsoft\Cryptography',
+      '/v',
+      'MachineGuid'
+    ]);
+    if (result.exitCode == 0) {
+      for (var line in (result.stdout as String).split('\n')) {
+        if (line.contains('MachineGuid')) {
+          final parts = line.trim().split(RegExp(r'\s+'));
+          if (parts.length >= 3) return parts.last;
+        }
+      }
+    }
+    throw Exception('Failed to read MachineGuid');
+  } else if (Platform.isMacOS) {
+    final result = await Process.run(
+      'ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice']
+    );
+    if (result.exitCode == 0) {
+      final out = result.stdout as String;
+      final m = RegExp(r'"IOPlatformUUID"\s*=\s*"(.+)"').firstMatch(out);
+      if (m != null) return m.group(1)!;
+    }
+    throw Exception('Failed to read IOPlatformUUID');
+  } else {
+    return Platform.localHostname;
   }
 }
 
-/// --- License / Device-lock logic ---
+Future<String> getDeviceCode() async {
+  try {
+    final raw = await _readRawMachineId();
+    final h = sha256.convert(utf8.encode(raw));
+    return h.toString().toUpperCase();
+  } catch (_) {
+    final fallback = Platform.localHostname;
+    final h = sha256.convert(utf8.encode(fallback));
+    return h.toString().toUpperCase();
+  }
+}
 
+/// ─────────────────────────────────────────────────
+/// 2) LICENSE VERIFICATION
+/// ─────────────────────────────────────────────────
+
+// Replace with your actual PEM public key
 const _publicPem = r'''
 -----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7wbxtE65h/Lk+mDPy/B3
@@ -74,29 +82,10 @@ TNOuR2tgV7h09xaFMvwPuEKqMmsU8lcBvK0sB/tWOT9QlPBpLrzYXw21Jxh3itwz
 -----END PUBLIC KEY-----
 ''';
 
-/// 1. Read the Windows machine UUID via WMIC
-Future<String> _getRawMachineUuid() async {
-  final result = await Process.run('wmic', ['csproduct', 'get', 'uuid']);
-  if (result.exitCode != 0) {
-    throw Exception('Failed to read machine UUID: ${result.stderr}');
-  }
-  final lines = (result.stdout as String).trim().split('\n');
-  if (lines.length < 2) throw Exception('Unexpected WMIC output');
-  return lines[1].trim();
-}
-
-/// 2. Hash it to produce the “device code”
-Future<String> getDeviceCode() async {
-  final uuid = await _getRawMachineUuid();
-  final hash = sha256.convert(utf8.encode(uuid));
-  return hash.toString().toUpperCase();
-}
-
-/// 3. Verify the entered license signature matches this device code
 Future<bool> verifyLicense(String deviceCode, String licenseBase64) async {
   try {
     final pc.RSAPublicKey pub =
-        CryptoUtils.rsaPublicKeyFromPem(_publicPem) as pc.RSAPublicKey;
+      CryptoUtils.rsaPublicKeyFromPem(_publicPem) as pc.RSAPublicKey;
     final verifier = pc.Signer('SHA-256/RSA')
       ..init(false, pc.PublicKeyParameter<pc.RSAPublicKey>(pub));
     final sig = pc.RSASignature(base64.decode(licenseBase64));
@@ -109,7 +98,10 @@ Future<bool> verifyLicense(String deviceCode, String licenseBase64) async {
   }
 }
 
-/// 4. A full-screen dialog to ask the user for their license
+/// ─────────────────────────────────────────────────
+/// 3) LICENSE SCREEN
+/// ─────────────────────────────────────────────────
+
 class LicenseScreen extends StatefulWidget {
   final VoidCallback onVerified;
   const LicenseScreen({required this.onVerified, super.key});
@@ -119,7 +111,6 @@ class LicenseScreen extends StatefulWidget {
 }
 
 class _LicenseScreenState extends State<LicenseScreen> {
-  final _storage = FlutterSecureStorage();
   final _ctrl = TextEditingController();
   String? _deviceCode;
   String? _error;
@@ -128,12 +119,7 @@ class _LicenseScreenState extends State<LicenseScreen> {
   @override
   void initState() {
     super.initState();
-    // Load the device code (SHA-256 of the WMIC UUID) and trigger a rebuild
-    getDeviceCode().then((code) {
-      setState(() {
-        _deviceCode = code;
-      });
-    });
+    getDeviceCode().then((code) => setState(() => _deviceCode = code));
   }
 
   Future<void> _submit() async {
@@ -141,16 +127,13 @@ class _LicenseScreenState extends State<LicenseScreen> {
       _verifying = true;
       _error = null;
     });
-
-    final license = _ctrl.text.trim();
-    final ok = await verifyLicense(_deviceCode!, license);
-
+    final lic = _ctrl.text.trim();
+    final ok = await verifyLicense(_deviceCode!, lic);
     if (ok) {
-      // Save and proceed
-      await _storage.write(key: 'license', value: license);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('license', lic);
       widget.onVerified();
     } else {
-      // Show error
       setState(() {
         _error = 'الرخصة غير صالحة لهذا الجهاز';
         _verifying = false;
@@ -169,87 +152,56 @@ class _LicenseScreenState extends State<LicenseScreen> {
         ),
         body: Center(
           child: SizedBox(
-            width: MediaQuery.of(context).size.width > 600
-                ? 400
-                : MediaQuery.of(context).size.width * 0.9,
+            width: MediaQuery.of(context).size.width > 600 ? 400 : null,
             child: Card(
               color: Colors.teal[50],
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               elevation: 4,
               child: Padding(
                 padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.vpn_key, size: 64, color: Colors.teal),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'الرجاء إدخال مفتاح الترخيص الخاص بك',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.teal,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 24),
-
-                    // ← Device code display
-                    if (_deviceCode != null) ...[
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'رمز جهازك:',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                            color: Colors.teal[700],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      SelectableText(
-                        _deviceCode!,
-                        style: const TextStyle(fontSize: 14),
-                      ),
-                      const SizedBox(height: 24),
-                    ],
-
-                    // License input
-                    TextField(
-                      controller: _ctrl,
-                      decoration: InputDecoration(
-                        labelText: 'مفتاح الترخيص',
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        errorText: _error,
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.vpn_key, size: 64, color: Colors.teal),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'الرجاء إدخال مفتاح الترخيص الخاص بك',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.teal),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  if (_deviceCode != null) ...[
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'رمز جهازك:',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.teal[700]),
                       ),
                     ),
+                    const SizedBox(height: 4),
+                    SelectableText(_deviceCode!, style: const TextStyle(fontSize: 14)),
                     const SizedBox(height: 24),
-
-                    // Unlock button or spinner
-                    _verifying
-                        ? const CircularProgressIndicator()
-                        : ElevatedButton(
-                            onPressed: _submit,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.teal,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 32, vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: const Text(
-                              'فتح',
-                              style: TextStyle(
-                                  fontSize: 18, color: Colors.white),
-                            ),
+                  ] else
+                    const CircularProgressIndicator(),
+                  TextField(
+                    controller: _ctrl,
+                    decoration: InputDecoration(
+                      labelText: 'مفتاح الترخيص',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      errorText: _error,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  _verifying
+                      ? const CircularProgressIndicator()
+                      : ElevatedButton(
+                          onPressed: _deviceCode == null ? null : _submit,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.teal,
+                            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                           ),
-                  ],
-                ),
+                          child: const Text('فتح', style: TextStyle(fontSize: 18, color: Colors.white)),
+                        ),
+                ]),
               ),
             ),
           ),
@@ -259,7 +211,10 @@ class _LicenseScreenState extends State<LicenseScreen> {
   }
 }
 
-/// 5. Root widget: gate the app on license → then show the real MyApp
+/// ─────────────────────────────────────────────────
+/// 4) ROOT APP HANDLING
+/// ─────────────────────────────────────────────────
+
 void main() => runApp(const RootApp());
 
 class RootApp extends StatefulWidget {
@@ -269,18 +224,18 @@ class RootApp extends StatefulWidget {
 }
 
 class _RootAppState extends State<RootApp> {
-  final _storage = FlutterSecureStorage();
+  bool _checked = false;
   bool _licensed = false;
-  bool _checked  = false;
 
   @override
   void initState() {
     super.initState();
-    _checkLicense();
+    _init();
   }
 
-  Future<void> _checkLicense() async {
-    final lic = await _storage.read(key: 'license');
+  Future<void> _init() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lic = prefs.getString('license');
     if (lic != null) {
       final code = await getDeviceCode();
       _licensed = await verifyLicense(code, lic);
@@ -291,30 +246,58 @@ class _RootAppState extends State<RootApp> {
   @override
   Widget build(BuildContext context) {
     if (!_checked) {
-      return const MaterialApp(
-        home: Scaffold(body: Center(child: CircularProgressIndicator())),
-      );
+      return const MaterialApp(home: Scaffold(body: Center(child: CircularProgressIndicator())));
     }
     if (!_licensed) {
-      return LicenseScreen(onVerified: () {
-        setState(() => _licensed = true);
-      });
+      return LicenseScreen(onVerified: () => setState(() => _licensed = true));
     }
     return const MyApp();
   }
 }
 
-/// 6. Your original app, unchanged
+/// ─────────────────────────────────────────────────
+/// 5) YOUR ORIGINAL APP LOGIC
+/// ─────────────────────────────────────────────────
+
+Uri? globalServerUri;
+
+class ServerDiscovery {
+  RawDatagramSocket? _socket;
+  final _controller = StreamController<Uri>.broadcast();
+
+  Future<void> start() async {
+    _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 9999);
+    _socket!..broadcastEnabled = true..listen(_onData);
+  }
+
+  void _onData(RawSocketEvent event) {
+    if (event != RawSocketEvent.read) return;
+    final dg = _socket!.receive();
+    if (dg == null) return;
+    final msg = utf8.decode(dg.data);
+    if (!msg.startsWith('SEWING_SERVER:')) return;
+    final parts = msg.split(':');
+    if (parts.length < 2) return;
+    globalServerUri = Uri.parse('http://${dg.address.address}:${parts[1]}');
+    _controller.add(globalServerUri!);
+  }
+
+  Stream<Uri> get onServerFound => _controller.stream;
+
+  void dispose() {
+    _socket?.close();
+    _controller.close();
+  }
+}
+
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
-  @override
-  State<MyApp> createState() => _MyAppState();
+  @override State<MyApp> createState() => _MyAppState();
 }
 
 class _MyAppState extends State<MyApp> {
   String? _token, _role;
-  bool _loading     = true;
-  bool _discovering = true;
+  bool _loading = true, _discovering = true;
   late ServerDiscovery _disc;
 
   @override
@@ -327,8 +310,8 @@ class _MyAppState extends State<MyApp> {
   Future<void> _loadAuth() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _token   = prefs.getString('auth_token');
-      _role    = prefs.getString('auth_role');
+      _token = prefs.getString('auth_token');
+      _role = prefs.getString('auth_role');
       _loading = false;
     });
   }
@@ -348,7 +331,7 @@ class _MyAppState extends State<MyApp> {
     await prefs.setString('auth_role', role);
     setState(() {
       _token = token;
-      _role  = role;
+      _role = role;
     });
   }
 
@@ -359,8 +342,7 @@ class _MyAppState extends State<MyApp> {
     Navigator.of(ctx).pushNamedAndRemoveUntil('/login', (_) => false);
   }
 
-  @override
-  void dispose() {
+  @override void dispose() {
     _disc.dispose();
     super.dispose();
   }
@@ -368,11 +350,8 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext context) {
     if (_loading || _discovering || globalServerUri == null) {
-      return const MaterialApp(
-        home: Scaffold(body: Center(child: CircularProgressIndicator())),
-      );
+      return const MaterialApp(home: Scaffold(body: Center(child: CircularProgressIndicator())));
     }
-
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'نظام إدارة المعمل',
@@ -387,28 +366,25 @@ class _MyAppState extends State<MyApp> {
         GlobalCupertinoLocalizations.delegate,
       ],
       supportedLocales: const [Locale('ar')],
-      builder: (ctx, child) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: child ?? const SizedBox.shrink(),
-      ),
+      builder: (ctx, child) => Directionality(textDirection: TextDirection.rtl, child: child!),
       home: _token == null
-          ? LoginPage(onLogin: _onLogin)
-          : HomePage(role: _role!, onLogout: _onLogout),
+        ? LoginPage(onLogin: _onLogin)
+        : HomePage(role: _role!, onLogout: _onLogout),
       routes: {
-        '/login':       (ctx) => LoginPage(onLogin: _onLogin),
-        '/home':        (ctx) => HomePage(role: _role!, onLogout: _onLogout),
-        '/sewing':      (ctx) => SewingDashboard(role: _role!),
-        '/embroidery':  (ctx) => EmbroideryDashboard(role: _role!),
-        '/design':      (ctx) => const DesignDashboard(),
-        '/manage-users':(ctx) => _token == null
-                             ? const ErrorScreen('Unauthorized access')
-                             : ManageUsersPage(token: _token!, role: _role!),
+        '/login': (c) => LoginPage(onLogin: _onLogin),
+        '/home':  (c) => HomePage(role: _role!, onLogout: _onLogout),
+        '/sewing':     (c) => SewingDashboard(role: _role!),
+        '/embroidery': (c) => EmbroideryDashboard(role: _role!),
+        '/design':     (c) => const DesignDashboard(),
+        '/manage-users':(c) => _token==null
+           ? const ErrorScreen('Unauthorized access')
+           : ManageUsersPage(token: _token!, role: _role!),
       },
     );
   }
 }
 
-// ...keep your existing LoginPage, HomePage, ManageUsersPage, RoleGate, and ErrorScreen...
+// Keep your existing LoginPage, HomePage, ManageUsersPage, RoleGate, ErrorScreen definitions below.
 
 
 class ErrorScreen extends StatelessWidget {
