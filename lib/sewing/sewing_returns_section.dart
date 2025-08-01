@@ -30,7 +30,8 @@ class _SewingReturnsSectionState extends State<SewingReturnsSection> {
   final ScrollController _hCtrl = ScrollController();
 
   // ---------------- API ----------------
-String get baseUrl => '${globalServerUri.toString()}/returns/';
+String get _apiUrl => '${globalServerUri.toString()}/returns/';
+String get _base => '${globalServerUri.toString()}';
 
   @override
   void initState() {
@@ -75,7 +76,7 @@ String get baseUrl => '${globalServerUri.toString()}/returns/';
   }
 
   Future<void> _fetchReturns() async {
-    final response = await http.get(Uri.parse(baseUrl));
+    final response = await http.get(Uri.parse(_apiUrl));
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body) as List;
       setState(() {
@@ -89,7 +90,7 @@ String get baseUrl => '${globalServerUri.toString()}/returns/';
 
   Future<void> _fetchFactures() async {
     final response =
-        await http.get(Uri.parse('http://localhost:8888/sales/factures'));
+        await http.get(Uri.parse('${_base}/sales/factures'));
     if (response.statusCode == 200) {
       setState(() {
         allFactures = jsonDecode(response.body) as List;
@@ -101,7 +102,7 @@ String get baseUrl => '${globalServerUri.toString()}/returns/';
 
   Future<void> _fetchMaterials() async {
     final response =
-        await http.get(Uri.parse('http://localhost:8888/models/materials/'));
+        await http.get(Uri.parse('${_base}/models/materials/'));
     if (response.statusCode == 200) {
       setState(() {
         allMaterials = jsonDecode(response.body) as List;
@@ -451,7 +452,7 @@ String get baseUrl => '${globalServerUri.toString()}/returns/';
 
                       try {
                         final response = await http.post(
-                          Uri.parse(baseUrl),
+                          Uri.parse(_apiUrl),
                           headers: {'Content-Type': 'application/json'},
                           body: jsonEncode(payload),
                         );
@@ -485,7 +486,7 @@ String get baseUrl => '${globalServerUri.toString()}/returns/';
   Future<List<dynamic>> _getFactureModels(int factureId) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl$factureId'), // Changed to new route
+        Uri.parse('${_apiUrl}${factureId}'), // Changed to new route
       );
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -610,7 +611,7 @@ String get baseUrl => '${globalServerUri.toString()}/returns/';
 
     if (confirmed == true) {
       try {
-        final response = await http.delete(Uri.parse('$baseUrl$returnId'));
+        final response = await http.delete(Uri.parse('${_apiUrl}${returnId}'));
         if (response.statusCode == 200) {
           _showSnackBar('تم حذف المرتجع بنجاح', color: Colors.green);
           await _fetchReturns();
@@ -635,7 +636,7 @@ Future<void> _validateReturn(Map<String, dynamic> returnItem) async {
     };
 
     final response = await http.patch(
-      Uri.parse('$baseUrl${returnItem['id']}/validate'),
+      Uri.parse('${_apiUrl}${returnItem['id']}/validate'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(payload),
     );

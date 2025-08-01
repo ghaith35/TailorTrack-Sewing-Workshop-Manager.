@@ -3,11 +3,16 @@
 import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
+import 'package:crypto/crypto.dart';
+import 'package:basic_utils/basic_utils.dart';
+import 'package:pointycastle/export.dart' as pc;
 
 import 'sewing/sewing_dashboard.dart';
 import 'embroidery/embroidery_dashboard.dart';
@@ -55,8 +60,251 @@ class ServerDiscovery {
   }
 }
 
-void main() => runApp(const MyApp());
+/// --- License / Device-lock logic ---
 
+const _publicPem = r'''
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7wbxtE65h/Lk+mDPy/B3
+LXhLQ3Yix55XHjpFYXDlj9WttsRaMJMcibXQh+QzIJiUJVYrAZDsJFW1iAhIkbhY
+u4U0WMxoVltrtmlWPeY74W8mkzxtIS9i5/seRzetHiSH4SnuwwCIrvQXI07s6S8k
+Y0FkH55RW0xmylO1i8mi3e3/l+eFUxez19A8I4DIqAh+4ktI38QlVLWED/OQFfP8
+AAzHTgI3S1d4JRRnGrczsjdszh+8RD5nf276rWn8A7sH1giQNUkCePqZR+cQCVoC
+TNOuR2tgV7h09xaFMvwPuEKqMmsU8lcBvK0sB/tWOT9QlPBpLrzYXw21Jxh3itwz
+4wIDAQAB
+-----END PUBLIC KEY-----
+''';
+
+/// 1. Read the Windows machine UUID via WMIC
+Future<String> _getRawMachineUuid() async {
+  final result = await Process.run('wmic', ['csproduct', 'get', 'uuid']);
+  if (result.exitCode != 0) {
+    throw Exception('Failed to read machine UUID: ${result.stderr}');
+  }
+  final lines = (result.stdout as String).trim().split('\n');
+  if (lines.length < 2) throw Exception('Unexpected WMIC output');
+  return lines[1].trim();
+}
+
+/// 2. Hash it to produce the “device code”
+Future<String> getDeviceCode() async {
+  final uuid = await _getRawMachineUuid();
+  final hash = sha256.convert(utf8.encode(uuid));
+  return hash.toString().toUpperCase();
+}
+
+/// 3. Verify the entered license signature matches this device code
+Future<bool> verifyLicense(String deviceCode, String licenseBase64) async {
+  try {
+    final pc.RSAPublicKey pub =
+        CryptoUtils.rsaPublicKeyFromPem(_publicPem) as pc.RSAPublicKey;
+    final verifier = pc.Signer('SHA-256/RSA')
+      ..init(false, pc.PublicKeyParameter<pc.RSAPublicKey>(pub));
+    final sig = pc.RSASignature(base64.decode(licenseBase64));
+    return verifier.verifySignature(
+      Uint8List.fromList(utf8.encode(deviceCode)),
+      sig,
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
+/// 4. A full-screen dialog to ask the user for their license
+class LicenseScreen extends StatefulWidget {
+  final VoidCallback onVerified;
+  const LicenseScreen({required this.onVerified, super.key});
+
+  @override
+  State<LicenseScreen> createState() => _LicenseScreenState();
+}
+
+class _LicenseScreenState extends State<LicenseScreen> {
+  final _storage = FlutterSecureStorage();
+  final _ctrl = TextEditingController();
+  String? _deviceCode;
+  String? _error;
+  bool _verifying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Load the device code (SHA-256 of the WMIC UUID) and trigger a rebuild
+    getDeviceCode().then((code) {
+      setState(() {
+        _deviceCode = code;
+      });
+    });
+  }
+
+  Future<void> _submit() async {
+    setState(() {
+      _verifying = true;
+      _error = null;
+    });
+
+    final license = _ctrl.text.trim();
+    final ok = await verifyLicense(_deviceCode!, license);
+
+    if (ok) {
+      // Save and proceed
+      await _storage.write(key: 'license', value: license);
+      widget.onVerified();
+    } else {
+      // Show error
+      setState(() {
+        _error = 'الرخصة غير صالحة لهذا الجهاز';
+        _verifying = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        appBar: AppBar(
+          title: const Text('إدخال مفتاح الترخيص'),
+          backgroundColor: Colors.teal,
+        ),
+        body: Center(
+          child: SizedBox(
+            width: MediaQuery.of(context).size.width > 600
+                ? 400
+                : MediaQuery.of(context).size.width * 0.9,
+            child: Card(
+              color: Colors.teal[50],
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              elevation: 4,
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.vpn_key, size: 64, color: Colors.teal),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'الرجاء إدخال مفتاح الترخيص الخاص بك',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.teal,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+
+                    // ← Device code display
+                    if (_deviceCode != null) ...[
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'رمز جهازك:',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: Colors.teal[700],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      SelectableText(
+                        _deviceCode!,
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
+
+                    // License input
+                    TextField(
+                      controller: _ctrl,
+                      decoration: InputDecoration(
+                        labelText: 'مفتاح الترخيص',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        errorText: _error,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
+                    // Unlock button or spinner
+                    _verifying
+                        ? const CircularProgressIndicator()
+                        : ElevatedButton(
+                            onPressed: _submit,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.teal,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 32, vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8)),
+                            ),
+                            child: const Text(
+                              'فتح',
+                              style: TextStyle(
+                                  fontSize: 18, color: Colors.white),
+                            ),
+                          ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 5. Root widget: gate the app on license → then show the real MyApp
+void main() => runApp(const RootApp());
+
+class RootApp extends StatefulWidget {
+  const RootApp({super.key});
+  @override
+  State<RootApp> createState() => _RootAppState();
+}
+
+class _RootAppState extends State<RootApp> {
+  final _storage = FlutterSecureStorage();
+  bool _licensed = false;
+  bool _checked  = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkLicense();
+  }
+
+  Future<void> _checkLicense() async {
+    final lic = await _storage.read(key: 'license');
+    if (lic != null) {
+      final code = await getDeviceCode();
+      _licensed = await verifyLicense(code, lic);
+    }
+    setState(() => _checked = true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_checked) {
+      return const MaterialApp(
+        home: Scaffold(body: Center(child: CircularProgressIndicator())),
+      );
+    }
+    if (!_licensed) {
+      return LicenseScreen(onVerified: () {
+        setState(() => _licensed = true);
+      });
+    }
+    return const MyApp();
+  }
+}
+
+/// 6. Your original app, unchanged
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
   @override
@@ -88,7 +336,6 @@ class _MyAppState extends State<MyApp> {
   Future<void> _startDiscovery() async {
     _disc = ServerDiscovery();
     await _disc.start();
-    // once we get the first broadcast, stop showing the spinner
     _disc.onServerFound.first.then((_) {
       if (!mounted) return;
       setState(() => _discovering = false);
@@ -120,7 +367,6 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    // wait for both auth _and_ server discovery
     if (_loading || _discovering || globalServerUri == null) {
       return const MaterialApp(
         home: Scaffold(body: Center(child: CircularProgressIndicator())),
@@ -161,6 +407,9 @@ class _MyAppState extends State<MyApp> {
     );
   }
 }
+
+// ...keep your existing LoginPage, HomePage, ManageUsersPage, RoleGate, and ErrorScreen...
+
 
 class ErrorScreen extends StatelessWidget {
   final String message;

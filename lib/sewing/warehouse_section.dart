@@ -17,6 +17,7 @@ class _SewingWarehouseSectionState extends State<SewingWarehouseSection> {
   // Ready products state
   List<dynamic> readyProducts = [];
   bool isReadyProductsLoading = false;
+String get _apiUrl => '${globalServerUri.toString()}';
 
   // Raw materials state
   List<dynamic> types = [];
@@ -53,7 +54,7 @@ class _SewingWarehouseSectionState extends State<SewingWarehouseSection> {
   Future<void> _fetchReadyProducts() async {
     setState(() => isReadyProductsLoading = true);
     try {
-      final res = await http.get(Uri.parse('http://localhost:8888/sewing/product-inventory'));
+      final res = await http.get(Uri.parse('${_apiUrl}/sewing/product-inventory'));
       if (res.statusCode == 200) {
         readyProducts = jsonDecode(res.body) as List;
       } else {
@@ -74,7 +75,7 @@ void _showSnackBar(String msg, {Color color = Colors.black}) {
   // ================= Raw Materials ================
   Future<void> fetchTypes() async {
     setState(() => isTypesLoading = true);
-    final res = await http.get(Uri.parse('http://localhost:8888/sewing/material-types'));
+    final res = await http.get(Uri.parse('${_apiUrl}/sewing/material-types'));
     if (res.statusCode == 200) {
       types = jsonDecode(res.body) as List;
       if (types.isNotEmpty && selectedTypeId == null) {
@@ -92,7 +93,7 @@ void _showSnackBar(String msg, {Color color = Colors.black}) {
   //     specs = [];
   //     materials = [];
   //   });
-  //   final res = await http.get(Uri.parse('http://localhost:8888/sewing/materials?type_id=$typeId'));
+  //   final res = await http.get(Uri.parse('${_apiUrl}/sewing/materials?type_id=$typeId'));
   //   if (res.statusCode == 200) {
   //     final data = jsonDecode(res.body);
   //     specs = data['specs'];
@@ -107,7 +108,7 @@ void _showSnackBar(String msg, {Color color = Colors.black}) {
       specs = [];
       materials = [];
     });
-    final res = await http.get(Uri.parse('http://localhost:8888/sewing/materials?type_id=$typeId'));
+    final res = await http.get(Uri.parse('${_apiUrl}/sewing/materials?type_id=$typeId'));
     if (res.statusCode == 200) {
       final data = jsonDecode(res.body);
       specs = data['specs'];
@@ -171,13 +172,13 @@ void _showSnackBar(String msg, {Color color = Colors.black}) {
   //               });
   //               if (isEdit) {
   //                 await http.put(
-  //                   Uri.parse('http://localhost:8888/sewing/material-types/${current!['id']}'),
+  //                   Uri.parse('${_apiUrl}/sewing/material-types/${current!['id']}'),
   //                   headers: {'Content-Type': 'application/json'},
   //                   body: body,
   //                 );
   //               } else {
   //                 await http.post(
-  //                   Uri.parse('http://localhost:8888/sewing/material-types'),
+  //                   Uri.parse('${_apiUrl}/sewing/material-types'),
   //                   headers: {'Content-Type': 'application/json'},
   //                   body: body,
   //                 );
@@ -194,7 +195,7 @@ void _showSnackBar(String msg, {Color color = Colors.black}) {
   // }
 
   Future<void> deleteType(int id) async {
-    await http.delete(Uri.parse('http://localhost:8888/sewing/material-types/$id'));
+    await http.delete(Uri.parse('${_apiUrl}/sewing/material-types/$id'));
     await fetchTypes();
     setState(() {
       selectedTypeId = null;
@@ -289,7 +290,7 @@ void _showSnackBar(String msg, {Color color = Colors.black}) {
                 if (isEdit) {
                   await http.put(
                     Uri.parse(
-                        'http://localhost:8888/sewing/material-types/${current!['id']}'),
+                        '${_apiUrl}/sewing/material-types/${current!['id']}'),
                     headers: {
                       'Content-Type': 'application/json'
                     },
@@ -298,7 +299,7 @@ void _showSnackBar(String msg, {Color color = Colors.black}) {
                 } else {
                   await http.post(
                     Uri.parse(
-                        'http://localhost:8888/sewing/material-types'),
+                        '${_apiUrl}/sewing/material-types'),
                     headers: {
                       'Content-Type': 'application/json'
                     },
@@ -377,18 +378,18 @@ Future<void> _addOrEditReadyProduct([Map<String, dynamic>? product]) async {
               ],
               const SizedBox(height: 8),
               // Quantity
-              TextFormField(
-                controller: qtyCtl,
-                decoration:
-                    const InputDecoration(labelText: 'الكمية'),
-                keyboardType: TextInputType.number,
-                validator: (v) {
-                  final n = double.tryParse(v ?? '') ?? 0;
-                  return n <= 0
-                      ? 'أدخل قيمة كمية صالحة'
-                      : null;
-                },
-              ),
+              // TextFormField(
+              //   controller: qtyCtl,
+              //   decoration:
+              //       const InputDecoration(labelText: 'الكمية'),
+              //   keyboardType: TextInputType.number,
+              //   validator: (v) {
+              //     final n = double.tryParse(v ?? '') ?? 0;
+              //     return n <= 0
+              //         ? 'أدخل قيمة كمية صالحة'
+              //         : null;
+              //   },
+              // ),
             ],
           ),
         ),
@@ -409,8 +410,8 @@ Future<void> _addOrEditReadyProduct([Map<String, dynamic>? product]) async {
               };
               try {
                 final uri = isEdit
-                    ? 'http://localhost:8888/sewing/product-inventory/${product!['id']}'
-                    : 'http://localhost:8888/sewing/product-inventory';
+                    ? '${_apiUrl}/sewing/product-inventory/${product!['id']}'
+                    : '${_apiUrl}/sewing/product-inventory';
                 final resp = isEdit
                     ? await http.put(Uri.parse(uri),
                         headers: {
@@ -528,8 +529,8 @@ Future<void> addOrEditMaterial({Map<String, dynamic>? material}) async {
               };
               try {
                 final uri = material != null
-                    ? 'http://localhost:8888/sewing/materials/${material['id']}'
-                    : 'http://localhost:8888/sewing/materials';
+                    ? '${_apiUrl}/sewing/materials/${material['id']}'
+                    : '${_apiUrl}/sewing/materials';
                 final resp = material != null
                     ? await http.put(Uri.parse(uri),
                         headers: {
@@ -595,7 +596,7 @@ Future<void> _deleteReadyProduct(int? id) async {
 
   try {
     final resp = await http.delete(
-      Uri.parse('http://localhost:8888/sewing/product-inventory/$id'),
+      Uri.parse('${_apiUrl}/sewing/product-inventory/$id'),
     );
     if (resp.statusCode == 200) {
       _showSnackBar('تم حذف المنتج', color: Colors.green);
@@ -633,7 +634,7 @@ Future<void> _deleteType(int id, String name) async {
 
   try {
     final resp = await http.delete(
-      Uri.parse('http://localhost:8888/sewing/material-types/$id'),
+      Uri.parse('${_apiUrl}/sewing/material-types/$id'),
     );
     if (resp.statusCode == 200) {
       _showSnackBar('تم حذف نوع المادة', color: Colors.green);
@@ -677,7 +678,7 @@ Future<void> _deleteMaterial(int id, String code) async {
 
   try {
     final resp = await http.delete(
-      Uri.parse('http://localhost:8888/sewing/materials/$id'),
+      Uri.parse('${_apiUrl}/sewing/materials/$id'),
     );
     if (resp.statusCode == 200) {
       _showSnackBar('تم حذف المادة', color: Colors.green);
@@ -737,10 +738,10 @@ Future<void> _deleteMaterial(int id, String code) async {
                   DataCell(Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton(
-                        icon: const Icon(Icons.edit, color: Colors.teal),
-                        onPressed: () => _addOrEditReadyProduct(p),
-                      ),
+                      // IconButton(
+                      //   icon: const Icon(Icons.edit, color: Colors.teal),
+                      //   onPressed: () => _addOrEditReadyProduct(p),
+                      // ),
                       IconButton(
                         icon: const Icon(Icons.delete, color: Colors.red),
                         // Always clickable; delete handler will show a snackbar if ID is null
@@ -760,7 +761,7 @@ Future<void> _deleteMaterial(int id, String code) async {
 
 
   Future<void> deleteMaterial(int id) async {
-    await http.delete(Uri.parse('http://localhost:8888/sewing/materials/$id'));
+    await http.delete(Uri.parse('${_apiUrl}/sewing/materials/$id'));
     await fetchMaterialsForType(selectedTypeId!);
   }
 

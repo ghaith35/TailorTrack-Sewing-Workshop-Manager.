@@ -17,156 +17,145 @@ Router getDesignWarehouseRoutes(PostgreSQLConnection db) {
 
   // GET /design/warehouse/product-inventory?client_id=&season_id=
   // returns each inventory row (id) + model info
+// GET /design/warehouse/product-inventory?client_id=&season_id=
   router.get('/product-inventory', (Request req) async {
-    try {
-      final qp = req.url.queryParameters;
-      final clientId = int.tryParse(qp['client_id'] ?? '');
-      final seasonId = int.tryParse(qp['season_id'] ?? '');
+    final qp = req.url.queryParameters;
+    final clientId = int.tryParse(qp['client_id'] ?? '');
+    final seasonId = int.tryParse(qp['season_id'] ?? '');
 
-      final where = <String>[];
-      final vals = <String, dynamic>{};
+    final where = <String>[];
+    final vals = <String, dynamic>{};
 
-      if (clientId != null) {
-        where.add('m.client_id=@cid');
-        vals['cid'] = clientId;
-      }
-      if (seasonId != null) {
-        where.add('m.season_id=@sid');
-        vals['sid'] = seasonId;
-      }
-      final whereSql = where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}';
-
-      final rows = await db.query('''
-        SELECT
-          pi.id,
-          pi.quantity,
-          m.id          AS model_id,
-          m.model_name,
-          m.marker_name,
-          m.model_date,
-          m.length,
-          m.width,
-          m.util_percent,
-          m.placed,
-          m.sizes_text,
-          m.price,
-          m.description,
-          c.id          AS client_id,
-          c.full_name   AS client_name,
-          s.id          AS season_id,
-          s.name        AS season_name
-        FROM design.product_inventory pi
-        JOIN design.models   m ON m.id = pi.model_id
-        JOIN design.clients  c ON c.id = m.client_id
-        LEFT JOIN design.seasons s ON s.id = m.season_id
-        $whereSql
-        ORDER BY pi.id DESC
-      ''', substitutionValues: vals);
-
-      final out = rows.map((r) => {
-            'id'           : r[0],
-            'quantity'     : _num(r[1]),
-            'model_id'     : r[2],
-            'model_name'   : r[3],
-            'marker_name'  : r[4],
-            'model_date'   : _yyyyMMdd(r[5] as DateTime?),
-            'length'       : _num(r[6]),
-            'width'        : _num(r[7]),
-            'util_percent' : _num(r[8]),
-            'placed'       : r[9],
-            'sizes_text'   : r[10] ?? '',
-            'price'        : _num(r[11]),
-            'description'  : r[12],
-            'client_id'    : r[13],
-            'client_name'  : r[14],
-            'season_id'    : r[15],
-            'season_name'  : r[16],
-          }).toList();
-
-      return Response.ok(jsonEncode(out), headers: {'Content-Type': 'application/json'});
-    } catch (e, st) {
-      print('ERROR GET /design/warehouse/product-inventory: $e\n$st');
-      return Response.internalServerError(
-        body: jsonEncode({'error': e.toString()}),
-        headers: {'Content-Type': 'application/json'},
-      );
+    if (clientId != null) {
+      where.add('m.client_id = @cid');
+      vals['cid'] = clientId;
     }
+    if (seasonId != null) {
+      where.add('m.season_id = @sid');
+      vals['sid'] = seasonId;
+    }
+    final whereSql = where.isEmpty ? '' : 'WHERE ' + where.join(' AND ');
+
+    final rows = await db.query('''
+      SELECT
+        pi.id,
+        pi.quantity,
+        m.id          AS model_id,
+        m.model_name,
+        m.marker_name,
+        m.model_date,
+        m.length,
+        m.width,
+        m.util_percent,
+        m.placed,
+        m.sizes_text,
+        m.price,
+        m.description,
+        c.id          AS client_id,
+        c.full_name   AS client_name,
+        s.id          AS season_id,
+        s.name        AS season_name
+      FROM design.product_inventory pi
+      JOIN design.models   m ON m.id = pi.model_id
+      JOIN design.clients  c ON c.id = m.client_id
+      LEFT JOIN design.seasons s ON s.id = m.season_id
+      $whereSql
+      ORDER BY pi.id DESC
+    ''', substitutionValues: vals);
+
+    final out = rows.map((r) => {
+          'id'           : r[0],
+          'quantity'     : _num(r[1]),
+          'model_id'     : r[2],
+          'model_name'   : r[3],
+          'marker_name'  : r[4],
+          'model_date'   : _yyyyMMdd(r[5] as DateTime?),
+          'length'       : _num(r[6]),
+          'width'        : _num(r[7]),
+          'util_percent' : _num(r[8]),
+          'placed'       : r[9],
+          'sizes_text'   : r[10] ?? '',
+          'price'        : _num(r[11]),
+          'description'  : r[12],
+          'client_id'    : r[13],
+          'client_name'  : r[14],
+          'season_id'    : r[15],
+          'season_name'  : r[16],
+        }).toList();
+
+    return Response.ok(jsonEncode(out), headers: {'Content-Type': 'application/json'});
   });
 
   // POST /design/warehouse/product-inventory
-  // body: {warehouse_id:1, model_id:##, quantity:##}
+  // body: { warehouse_id:1, model_id:##, quantity:## }
+  // => if (warehouse_id, model_id) already exists, just add to quantity
   router.post('/product-inventory', (Request req) async {
-    try {
-      final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-      final wid = _int(data['warehouse_id'] ?? 1);
-      final mid = _int(data['model_id']);
-      final qty = _num(data['quantity']);
+  try {
+    final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    final wid = _int(data['warehouse_id'] ?? 1);
+    final mid = _int(data['model_id']);
+    final qty = _num(data['quantity']);
 
-      if (mid == 0 || qty <= 0) {
-        return Response(400,
-            body: jsonEncode({'error': 'model_id and quantity required'}),
-            headers: {'Content-Type': 'application/json'});
-      }
-
-      final res = await db.query('''
-        INSERT INTO design.product_inventory (warehouse_id, model_id, quantity)
-        VALUES (@w,@m,@q)
-        RETURNING id;
-      ''', substitutionValues: {'w': wid, 'm': mid, 'q': qty});
-
-      return Response.ok(jsonEncode({'id': res.first[0]}),
-          headers: {'Content-Type': 'application/json'});
-    } catch (e, st) {
-      print('ERROR POST /design/warehouse/product-inventory: $e\n$st');
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Create failed', 'details': e.toString()}),
-        headers: {'Content-Type': 'application/json'},
-      );
+    if (mid == 0 || qty <= 0) {
+      return Response(400,
+        body: jsonEncode({'error': 'model_id and positive quantity required'}),
+        headers: {'Content-Type': 'application/json'});
     }
-  });
+
+    // UPSERT: if (warehouse_id, model_id) exists, just add to its quantity
+    final rows = await db.query(r'''
+      INSERT INTO design.product_inventory (warehouse_id, model_id, quantity)
+      VALUES (@w, @m, @q)
+      ON CONFLICT (warehouse_id, model_id) 
+        DO UPDATE 
+          SET quantity     = product_inventory.quantity + EXCLUDED.quantity,
+              last_updated = CURRENT_TIMESTAMP
+      RETURNING id;
+    ''', substitutionValues: {
+      'w': wid,
+      'm': mid,
+      'q': qty,
+    });
+
+    return Response.ok(
+      jsonEncode({'id': rows.first[0]}),
+      headers: {'Content-Type': 'application/json'}
+    );
+  } catch (e, st) {
+    print('ERROR POST /design/warehouse/product-inventory: $e\n$st');
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Create/Upsert failed', 'details': e.toString()}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
 
   // PUT /design/warehouse/product-inventory/<id>
   router.put('/product-inventory/<id|[0-9]+>', (Request req, String id) async {
-    try {
-      final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-      await db.query('''
-        UPDATE design.product_inventory
-           SET warehouse_id=@w,
-               model_id=@m,
-               quantity=@q,
-               last_updated=CURRENT_TIMESTAMP
-         WHERE id=@id
-      ''', substitutionValues: {
-        'id': int.parse(id),
-        'w' : _int(body['warehouse_id'] ?? 1),
-        'm' : _int(body['model_id']),
-        'q' : _num(body['quantity']),
-      });
-      return Response.ok(jsonEncode({'status': 'updated'}),
-          headers: {'Content-Type': 'application/json'});
-    } catch (e, st) {
-      print('ERROR PUT /design/warehouse/product-inventory: $e\n$st');
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Update failed', 'details': e.toString()}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
+    final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    await db.query('''
+      UPDATE design.product_inventory
+         SET warehouse_id = @w,
+             model_id     = @m,
+             quantity     = @q,
+             last_updated = CURRENT_TIMESTAMP
+       WHERE id = @id
+    ''', substitutionValues: {
+      'id': int.parse(id),
+      'w' : _int(body['warehouse_id'] ?? 1),
+      'm' : _int(body['model_id']),
+      'q' : _num(body['quantity']),
+    });
+    return Response.ok(jsonEncode({'status': 'updated'}),
+        headers: {'Content-Type': 'application/json'});
   });
 
   // DELETE /design/warehouse/product-inventory/<id>
   router.delete('/product-inventory/<id|[0-9]+>', (Request req, String id) async {
-    try {
-      await db.query('DELETE FROM design.product_inventory WHERE id=@id',
-          substitutionValues: {'id': int.parse(id)});
-      return Response.ok(jsonEncode({'status': 'deleted'}),
-          headers: {'Content-Type': 'application/json'});
-    } catch (e, st) {
-      print('ERROR DELETE /design/warehouse/product-inventory: $e\n$st');
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Delete failed', 'details': e.toString()}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
+    await db.query('DELETE FROM design.product_inventory WHERE id = @id',
+        substitutionValues: {'id': int.parse(id)});
+    return Response.ok(jsonEncode({'status': 'deleted'}),
+        headers: {'Content-Type': 'application/json'});
   });
 
   // ---------------- RAW MATERIALS (unchanged logic) ----------------

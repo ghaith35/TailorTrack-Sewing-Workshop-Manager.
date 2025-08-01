@@ -148,92 +148,131 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
   });
 
   // POST /returns - Create new return
-  router.post('/', (Request request) async {
-    try {
-      final bodyString = await request.readAsString();
-      // print('Creating return with payload: $bodyString');
-      final body = jsonDecode(bodyString);
-      
-      final factureId = parseInt(body['facture_id']);
-      final modelId = parseInt(body['model_id']);
-      final returnQuantity = parseInt(body['quantity']);
-      final isReadyToSell = body['is_ready_to_sell'] as bool? ?? false;
-      final repairMaterials = body['repair_materials'] as List? ?? [];
-      final repairCost = parseNum(body['repair_cost']);
-      final notes = body['notes'] as String? ?? '';
-      final returnDate = body['return_date'] != null
-          ? DateTime.parse(body['return_date'])
-          : DateTime.now();
+  // POST /returns - Create new return (and immediately stock it if ready-to-sell)
+router.post('/', (Request request) async {
+  try {
+    final body = jsonDecode(await request.readAsString()) as Map<String, dynamic>;
+    final factureId      = parseInt(body['facture_id']);
+    final modelId        = parseInt(body['model_id']);
+    final returnQuantity = parseInt(body['quantity']);
+    final isReady        = body['is_ready_to_sell'] as bool? ?? false;
+    final repairMaterials= body['repair_materials'] as List? ?? [];
+    final repairCost     = parseNum(body['repair_cost']);
+    final notes          = body['notes'] as String? ?? '';
+    final returnDate     = body['return_date'] != null
+        ? DateTime.parse(body['return_date'])
+        : DateTime.now();
 
-      // print('Parsed: factureId=$factureId, modelId=$modelId, quantity=$returnQuantity, repairMaterials=$repairMaterials, repairCost=$repairCost');
+    return await db.transaction((txn) async {
+      // 1) validate facture_item exists
+      final fi = await txn.query('''
+        SELECT quantity
+        FROM sewing.facture_items
+        WHERE facture_id = @f AND model_id = @m
+        LIMIT 1
+      ''', substitutionValues: {'f': factureId, 'm': modelId});
+      if (fi.isEmpty) {
+        return Response.notFound(jsonEncode({'error': 'Facture item not found'}), headers: {'Content-Type': 'application/json'});
+      }
+      final originalQty = parseInt(fi.first[0]);
+      final alreadyReturned = parseInt((await txn.query('''
+        SELECT COALESCE(SUM(quantity),0)
+        FROM sewing.returns
+        WHERE facture_id = @f AND model_id = @m
+      ''', substitutionValues: {'f': factureId,'m': modelId})).first[0]);
+      if (alreadyReturned + returnQuantity > originalQty) {
+        return Response(400,
+          body: jsonEncode({'error': 'الكمية المرتجعة تتجاوز المتاح (${originalQty - alreadyReturned})'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
 
-      return await db.transaction((txn) async {
-        if (factureId <= 0 || modelId <= 0 || returnQuantity <= 0) {
-          return Response(400, body: jsonEncode({'error': 'Invalid facture_id, model_id, or quantity'}), headers: {'Content-Type': 'application/json'});
-        }
+      // 2) insert return
+      final ins = await txn.query('''
+        INSERT INTO sewing.returns (
+          facture_id, model_id, quantity, return_date,
+          is_ready_to_sell, repair_materials,
+          repair_cost, notes, created_at, status
+        ) VALUES (
+          @f, @m, @q, @d, @ready,
+          @rm, @rc, @notes, CURRENT_TIMESTAMP, 'pending'
+        ) RETURNING id
+      ''', substitutionValues: {
+        'f'     : factureId,
+        'm'     : modelId,
+        'q'     : returnQuantity,
+        'd'     : returnDate,
+        'ready' : isReady,
+        'rm'    : jsonEncode(repairMaterials),
+        'rc'    : repairCost,
+        'notes' : notes,
+      });
+      final newReturnId = parseInt(ins.first[0]);
+      print('🟢 Return created: id=$newReturnId, ready=$isReady');
 
-        final factureItemResults = await txn.query('''
-          SELECT id, quantity
-          FROM sewing.facture_items 
-          WHERE facture_id = @facture_id AND model_id = @model_id 
+      // 3) if ready, merge into product_inventory
+      if (isReady) {
+        // a) find ready warehouse
+        final whRes = await txn.query("SELECT id FROM sewing.warehouses WHERE type='ready' LIMIT 1");
+        if (whRes.isEmpty) throw Exception('No ready warehouse found');
+        final whId = parseInt(whRes.first[0]);
+
+        // b) fetch color
+        final fiDetail = await txn.query('''
+          SELECT color
+          FROM sewing.facture_items
+          WHERE facture_id = @f AND model_id = @m
           LIMIT 1
-        ''', substitutionValues: {'facture_id': factureId, 'model_id': modelId});
+        ''', substitutionValues: {'f': factureId,'m': modelId});
+        final color = fiDetail.isNotEmpty ? fiDetail.first[0] as String? ?? '' : '';
 
-        if (factureItemResults.isEmpty) {
-          return Response.notFound(jsonEncode({'error': 'Facture item not found'}), headers: {'Content-Type': 'application/json'});
-        }
+        print('→ Merging into inventory: warehouse=$whId, model=$modelId, qty=$returnQuantity, color="$color"');
 
-        final originalQuantity = parseInt(factureItemResults.first[1]);
-        final existingReturns = await txn.query('''
-          SELECT COALESCE(SUM(quantity), 0)
-          FROM sewing.returns
-          WHERE facture_id = @facture_id AND model_id = @model_id
-        ''', substitutionValues: {'facture_id': factureId, 'model_id': modelId});
-        final totalReturned = parseInt(existingReturns.first[0]);
-
-        if (totalReturned + returnQuantity > originalQuantity) {
-          return Response(400, body: jsonEncode({
-            'error': 'الكمية المرتجعة تتجاوز الكمية المتاحة (${originalQuantity - totalReturned})',
-          }), headers: {'Content-Type': 'application/json'});
-        }
-
-        final returnResults = await txn.query('''
-          INSERT INTO sewing.returns (
-            facture_id, model_id, quantity, return_date, is_ready_to_sell, 
-            repair_materials, repair_cost, notes, created_at, status
+        await txn.query('''
+          INSERT INTO sewing.product_inventory (
+            warehouse_id, model_id, color, quantity, last_updated, production_batch_id
           ) VALUES (
-            @facture_id, @model_id, @quantity, @return_date, @is_ready_to_sell,
-            @repair_materials, @repair_cost, @notes, CURRENT_TIMESTAMP, 'pending'
-          ) RETURNING id
+            @wh, @mdl, @col, @qty, CURRENT_TIMESTAMP, NULL
+          )
+          ON CONFLICT ON CONSTRAINT product_inventory_wh_model_unique
+          DO UPDATE SET
+            quantity     = sewing.product_inventory.quantity + EXCLUDED.quantity,
+            last_updated = CURRENT_TIMESTAMP
         ''', substitutionValues: {
-          'facture_id': factureId,
-          'model_id': modelId,
-          'quantity': returnQuantity,
-          'return_date': returnDate,
-          'is_ready_to_sell': isReadyToSell,
-          'repair_materials': jsonEncode(repairMaterials),
-          'repair_cost': repairCost,
-          'notes': notes,
+          'wh' : whId,
+          'mdl': modelId,
+          'col': color,
+          'qty': returnQuantity,
         });
 
-        final returnId = parseInt(returnResults.first[0]);
-        print('Return created: id=$returnId');
+        // c) log the new quantity
+        final invRow = await txn.query('''
+          SELECT quantity
+          FROM sewing.product_inventory
+          WHERE warehouse_id = @wh AND model_id = @mdl
+        ''', substitutionValues: {'wh': whId,'mdl': modelId});
+        final newQty = invRow.isNotEmpty ? parseInt(invRow.first[0]) : -1;
+        print('→ New inventory.quantity is $newQty');
+      }
 
-        return Response(201, body: jsonEncode({
-          'id': returnId,
-          'message': 'Return created successfully',
-          'is_ready_to_sell': isReadyToSell,
-          'repair_cost': repairCost,
-        }), headers: {'Content-Type': 'application/json'});
-      });
-    } catch (e) {
-      print('Error creating return: $e');
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Failed to create return: $e'}),
+      return Response(201,
+        body: jsonEncode({
+          'id': newReturnId,
+          'message': 'Return created and stocked.',
+          'is_ready_to_sell': isReady,
+        }),
         headers: {'Content-Type': 'application/json'},
       );
-    }
-  });
+    });
+  } catch (e, st) {
+    print('🔴 Error in POST /returns: $e\n$st');
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to create return: $e'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
+
 
   // PATCH /returns/<id>/validate - Validate return to make it ready to sell
   router.patch('/<id>/validate', (Request request, String id) async {
@@ -434,27 +473,121 @@ Router getReturnsRoutes(PostgreSQLConnection db) {
 
   // DELETE /returns/<id> - Delete return
   router.delete('/<id>', (Request request, String id) async {
-    try {
-      final results = await db.query('''
-        DELETE FROM sewing.returns WHERE id = @id RETURNING id
-      ''', substitutionValues: {'id': int.parse(id)});
+  try {
+    final returnId = int.parse(id);
 
-      if (results.isEmpty) {
-        return Response.notFound(jsonEncode({'error': 'Return not found'}), headers: {'Content-Type': 'application/json'});
+    return await db.transaction((txn) async {
+      // 1) Fetch & lock the return row
+      final r = await txn.query(r'''
+        SELECT model_id,
+               quantity,
+               is_ready_to_sell,
+               repair_materials,  -- JSONB → might come back as List or String
+               repair_cost
+        FROM sewing.returns
+        WHERE id = @id
+        FOR UPDATE
+      ''', substitutionValues: {'id': returnId});
+
+      if (r.isEmpty) {
+        return Response.notFound(
+          jsonEncode({'error': 'Return not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
       }
 
+      final modelId    = parseInt(r.first[0]);
+      final returnQty  = parseInt(r.first[1]);
+      final wasReady   = r.first[2] as bool;
+      final rawField   = r.first[3];
+      final repairCost = parseNum(r.first[4]);
+
+      // 2) Decode repair_materials robustly
+      List<dynamic> repairMaterials;
+      if (rawField is String) {
+        try {
+          repairMaterials = jsonDecode(rawField) as List<dynamic>;
+        } catch (_) {
+          repairMaterials = [];
+        }
+      } else if (rawField is List) {
+        repairMaterials = rawField;
+      } else {
+        repairMaterials = [];
+      }
+
+      // If you want to see what you’re about to add back:
+      print('Rolling back materials for return $returnId: $repairMaterials');
+
+      // 3) Roll *raw* materials back into stock
+      for (final m in repairMaterials) {
+        if (m is Map<String, dynamic>) {
+          final matId   = parseInt(m['material_id']);
+          final perUnit = parseNum(m['quantity']);
+          final addQty  = (returnQty * perUnit).toInt();
+
+          await txn.query(r'''
+            UPDATE sewing.materials
+            SET stock_quantity = stock_quantity + @add
+            WHERE id = @mid
+          ''', substitutionValues: {
+            'add': addQty,
+            'mid': matId,
+          });
+        }
+      }
+
+      // 4) Remove the repair-cost expense
+      await txn.query(r'''
+        DELETE FROM sewing.expenses
+        WHERE expense_type = 'custom'
+          AND description = @desc
+      ''', substitutionValues: {
+        'desc': 'تكلفة إصلاح الإرجاع رقم $returnId',
+      });
+
+      // 5) If it had been marked ready-to-sell, reverse that
+      if (wasReady) {
+        final wh = await txn.query(r'''
+          SELECT id FROM sewing.warehouses
+          WHERE type = 'ready'
+          LIMIT 1
+        ''');
+        if (wh.isNotEmpty) {
+          await txn.query(r'''
+            UPDATE sewing.product_inventory
+            SET quantity     = quantity - @qty,
+                last_updated = CURRENT_TIMESTAMP
+            WHERE warehouse_id = @wh
+              AND model_id     = @mdl
+          ''', substitutionValues: {
+            'qty': returnQty,
+            'wh' : parseInt(wh.first[0]),
+            'mdl': modelId,
+          });
+        }
+      }
+
+      // 6) Finally delete the return row
+      await txn.query(r'''
+        DELETE FROM sewing.returns
+        WHERE id = @id
+      ''', substitutionValues: {'id': returnId});
+
       return Response.ok(
-        jsonEncode({'message': 'Return deleted successfully'}),
+        jsonEncode({'message': 'Return deleted; materials, expenses, and inventory rolled back.'}),
         headers: {'Content-Type': 'application/json'},
       );
-    } catch (e) {
-      print('Error deleting return $id: $e');
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Failed to delete return: $e'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-  });
+    });
+  } catch (e, st) {
+    print('Error deleting return $id: $e\n$st');
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to delete return: $e'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
+
 
   // GET /returns/stats - Get return statistics
   router.get('/stats', (Request request) async {

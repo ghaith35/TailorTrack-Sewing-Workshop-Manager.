@@ -372,6 +372,27 @@ Router getEmployeesRoutes(PostgreSQLConnection db) {
     return Response.ok(jsonEncode({'ok': true}), headers: {'Content-Type':'application/json'});
   });
 
+// ─── Delete loan ───────────────────────────────────────
+router.delete('/loans/<id|[0-9]+>', (Request request, String id) async {
+  final loanId = int.parse(id);
+
+  // 1) delete installments first (if you don’t have ON DELETE CASCADE)
+  await db.query(
+    'DELETE FROM sewing.employee_loan_installments WHERE loan_id = @lid',
+    substitutionValues: {'lid': loanId},
+  );
+
+  // 2) delete the loan record
+  await db.query(
+    'DELETE FROM sewing.employee_loans WHERE id = @lid',
+    substitutionValues: {'lid': loanId},
+  );
+
+  return Response.ok(
+    jsonEncode({'ok': true}),
+    headers: {'Content-Type': 'application/json'},
+  );
+});
 
   // ========== PIECE RECORDS CRUD ==========
   router.get('/pieces', (Request request) async {
@@ -530,37 +551,37 @@ router.get('/loans/monthly-summary', (Request request) async {
   final endDate   = fmt(lastDay);
   final today     = fmt(DateTime.now());
 
-  await db.transaction((ctx) async {
-    // Aggregate unpaid installments first, then update
-    await ctx.query(r'''
-      WITH due AS (
-        SELECT inst.loan_id,
-               SUM(inst.amount) AS amt_sum,
-               COUNT(*)         AS cnt
-        FROM   sewing.employee_loan_installments inst
-        WHERE  inst.due_date BETWEEN @start AND @end
-          AND  inst.is_paid = FALSE
-        GROUP  BY inst.loan_id
-      ),
-      mark AS (
-        UPDATE sewing.employee_loan_installments inst
-           SET is_paid = TRUE,
-               paid_date = @today
-         WHERE inst.due_date BETWEEN @start AND @end
-           AND inst.is_paid = FALSE
-        RETURNING loan_id
-      )
-      UPDATE sewing.employee_loans el
-         SET amount          = GREATEST(el.amount - d.amt_sum, 0),
-             duration_months = GREATEST(el.duration_months - d.cnt, 0)
-      FROM due d
-      WHERE d.loan_id = el.id;
-    ''', substitutionValues: {
-      'today': today,
-      'start': startDate,
-      'end'  : endDate,
-    });
-  });
+  // await db.transaction((ctx) async {
+  //   // Aggregate unpaid installments first, then update
+  //   await ctx.query(r'''
+  //     WITH due AS (
+  //       SELECT inst.loan_id,
+  //              SUM(inst.amount) AS amt_sum,
+  //              COUNT(*)         AS cnt
+  //       FROM   sewing.employee_loan_installments inst
+  //       WHERE  inst.due_date BETWEEN @start AND @end
+  //         AND  inst.is_paid = FALSE
+  //       GROUP  BY inst.loan_id
+  //     ),
+  //     mark AS (
+  //       UPDATE sewing.employee_loan_installments inst
+  //          SET is_paid = TRUE,
+  //              paid_date = @today
+  //        WHERE inst.due_date BETWEEN @start AND @end
+  //          AND inst.is_paid = FALSE
+  //       RETURNING loan_id
+  //     )
+  //     UPDATE sewing.employee_loans el
+  //        SET amount          = GREATEST(el.amount - d.amt_sum, 0),
+  //            duration_months = GREATEST(el.duration_months - d.cnt, 0)
+  //     FROM due d
+  //     WHERE d.loan_id = el.id;
+  //   ''', substitutionValues: {
+  //     'today': today,
+  //     'start': startDate,
+  //     'end'  : endDate,
+  //   });
+  // });
 
   // Helper to coerce any DB value to num
   num _toNum(dynamic v) {
@@ -748,29 +769,36 @@ router.get('/attendance/months', (Request request) async {
 });
 
 // Check if employee has active loan
+// ─── Check if employee is still within their loan block period ─────────────────
 router.get('/loans/check/<id|[0-9]+>', (Request request, String id) async {
   final empId = int.parse(id);
-  
-  try {
-    final result = await db.query('''
-      SELECT COUNT(*) > 0 as has_active_loan
-      FROM sewing.employee_loans el
-      JOIN sewing.employee_loan_installments eli ON eli.loan_id = el.id
-      WHERE el.employee_id = @empId
-        AND eli.is_paid = false
-    ''', substitutionValues: {'empId': empId});
-    
-    final hasActiveLoan = result.first[0] as bool;
-    
-    return Response.ok(
-      jsonEncode({'has_active_loan': hasActiveLoan}),
-      headers: {'Content-Type': 'application/json'},
-    );
-  } catch (e) {
-    print("ERROR: $e");
-    return Response.internalServerError(body: 'Internal Server Error: $e');
-  }
+
+  // 1) Find the latest "block end" among all loans: loan_date + duration_months
+  final res = await db.query(r'''
+    SELECT MAX(
+      (loan_date::date + (duration_months || ' months')::interval)
+    )::date AS next_available
+    FROM sewing.employee_loans
+    WHERE employee_id = @empId
+  ''', substitutionValues: {'empId': empId});
+
+  // 2) Parse result
+  final nextAvailable = res.first[0] as DateTime?;
+  final today         = DateTime.now();
+  final hasActiveLoan =
+    nextAvailable != null && today.isBefore(nextAvailable);
+
+  // 3) Return both a boolean and the unblock date
+  return Response.ok(
+    jsonEncode({
+      'has_active_loan'    : hasActiveLoan,
+      // e.g. "2025-07-01"
+      'next_available_date': nextAvailable?.toIso8601String().substring(0,10),
+    }),
+    headers: {'Content-Type': 'application/json'},
+  );
 });
+
 ////////////////////
 
 

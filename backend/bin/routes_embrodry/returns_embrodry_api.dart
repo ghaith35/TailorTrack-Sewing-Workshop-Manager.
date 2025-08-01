@@ -369,35 +369,141 @@ Router getEmbrodryReturnsRoutes(PostgreSQLConnection db) {
   });
 
   // DELETE
-  router.delete('/<id>', (Request request, String id) async {
-    try {
-      final results = await db.query('''
-        DELETE FROM embroidery.returns WHERE id = @id RETURNING id
-      ''', substitutionValues: {'id': int.parse(id)});
-      if (results.isEmpty) {
-        return Response.notFound(
+  // DELETE /embroidery/returns/<id>
+router.delete('/<id|[0-9]+>', (Request request, String id) async {
+  final returnId = parseInt(id);
+
+  try {
+    await db.transaction((txn) async {
+      // 1) Fetch the return record
+      final retRows = await txn.query(r'''
+        SELECT 
+          model_id,
+          quantity,
+          is_ready_to_sell,
+          repair_materials,
+          all_loss,
+          facture_id
+        FROM embroidery.returns
+        WHERE id = @rid
+      ''', substitutionValues: {'rid': returnId});
+
+      if (retRows.isEmpty) {
+        throw Response.notFound(
           jsonEncode({'error': 'Return not found'}),
           headers: {'Content-Type': 'application/json'},
         );
       }
-      return Response.ok(
-        jsonEncode({'message': 'Return deleted successfully'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    } catch (e) {
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Failed to delete return: $e'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-  });
 
-  router.all('/<ignored|.*>', (Request request) {
-    return Response.notFound(
-      jsonEncode({'error': 'Route not found'}),
+      // 2) Pull out the fields
+      final modelIdRaw   = retRows.first[0];
+      final qtyRaw       = retRows.first[1];
+      final readyRaw     = retRows.first[2];
+      final materialsRaw = retRows.first[3];
+      final lossRaw      = retRows.first[4];
+      final factIdRaw    = retRows.first[5];
+
+      final modelId      = parseInt(modelIdRaw);
+      final qty          = parseInt(qtyRaw);
+      final wasReady     = readyRaw is bool ? readyRaw : readyRaw == 1;
+      final lostEntirely = lossRaw  is bool ? lossRaw  : lossRaw  == 1;
+      final factId       = parseInt(factIdRaw);
+
+      // 3) Normalize repair_materials into a List<dynamic>
+      List<dynamic> materials;
+      if (materialsRaw == null) {
+        materials = [];
+      } else if (materialsRaw is String) {
+        try {
+          materials = jsonDecode(materialsRaw) as List<dynamic>;
+        } catch (_) {
+          materials = [];
+        }
+      } else if (materialsRaw is List) {
+        materials = materialsRaw.cast<dynamic>();
+      } else {
+        materials = [];
+      }
+
+      // 4) Reverse ready-to-sell inventory
+      if (wasReady && qty > 0) {
+        final wh = await txn.query(r'''
+          SELECT id FROM embroidery.warehouses
+           WHERE type = 'ready'
+           LIMIT 1
+        ''');
+        if (wh.isEmpty) throw Exception('No ready warehouse found');
+        final whId = parseInt(wh.first[0]);
+        await txn.query(r'''
+          UPDATE embroidery.product_inventory
+             SET quantity     = GREATEST(quantity - @q, 0),
+                 last_updated = CURRENT_TIMESTAMP
+           WHERE warehouse_id = @w AND model_id = @m
+        ''', substitutionValues: {
+          'q': qty,
+          'w': whId,
+          'm': modelId,
+        });
+      }
+
+      // 5) Undo expenses
+      if (lostEntirely) {
+        // remove the custom total-loss expense
+        await txn.query(r'''
+          DELETE FROM embroidery.expenses
+           WHERE expense_type = 'custom'
+             AND description LIKE @pattern
+        ''', substitutionValues: {
+          'pattern': 'خسارة مرتجع: فاتورة $factId موديل $modelId%'
+        });
+      } else {
+        // 5a) Restock each raw material
+        for (final m in materials) {
+          final matId       = parseInt(m['material_id']);
+          final perPieceQty = parseNum(m['quantity']);
+          final totalQty    = (perPieceQty * qty).toInt();
+          if (totalQty > 0) {
+            await txn.query(r'''
+              UPDATE embroidery.materials
+                 SET stock_quantity = stock_quantity + @q
+               WHERE id = @mid
+            ''', substitutionValues: {
+              'q'  : totalQty,
+              'mid': matId,
+            });
+          }
+        }
+        // 5b) Delete the raw_materials expenses
+        await txn.query(r'''
+          DELETE FROM embroidery.expenses
+           WHERE expense_type = 'raw_materials'
+             AND description LIKE @pattern
+        ''', substitutionValues: {
+          'pattern': 'مادة إصلاح مرتجع: فاتورة $factId موديل $modelId%'
+        });
+      }
+
+      // 6) Finally, hard-delete the return row
+      await txn.query(r'''
+        DELETE FROM embroidery.returns
+         WHERE id = @rid
+      ''', substitutionValues: {'rid': returnId});
+    });
+
+    return Response.ok(
+      jsonEncode({'message': 'Return deleted and all reversals applied.'}),
       headers: {'Content-Type': 'application/json'},
     );
-  });
+  } catch (e) {
+    // Propagate our not-found Response if thrown
+    if (e is Response) return e;
+
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to delete return: $e'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
 
   return router;
 }

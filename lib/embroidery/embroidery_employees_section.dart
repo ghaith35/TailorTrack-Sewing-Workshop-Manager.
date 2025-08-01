@@ -18,7 +18,7 @@ class _EmbroideryEmployeesSectionState extends State<EmbroideryEmployeesSection>
   int attType = 0;
   int selectedDataTab = 0;
   int selectedSalariesTab = 0;
-String get _apiUrl => '${globalServerUri.toString()}/embroidery-employees/';
+String get _apiUrl => '${globalServerUri.toString()}/embroidery-employees';
 
   // Attendance year/month selection
   List<int> _availableYears = [];
@@ -219,7 +219,7 @@ int?     selectedDay;
   Future<void> _fetchAttendanceYears() async {
     try {
       final res = await http.get(Uri.parse(
-          '${_apiUrl}attendance/years?type=${attType == 0 ? "monthly" : "piece"}'));
+          '${_apiUrl}/attendance/years?type=${attType == 0 ? "monthly" : "piece"}'));
       if (res.statusCode == 200) {
         setState(() {
           _availableYears = (jsonDecode(res.body) as List).cast<int>();
@@ -240,7 +240,7 @@ int?     selectedDay;
     if (selectedYear == null) return;
     try {
       final res = await http.get(Uri.parse(
-          '${_apiUrl}attendance/months?year=$selectedYear&type=${attType == 0 ? "monthly" : "piece"}'));
+          '${_apiUrl}/attendance/months?year=$selectedYear&type=${attType == 0 ? "monthly" : "piece"}'));
       if (res.statusCode == 200) {
         setState(() {
           _availableMonths = (jsonDecode(res.body) as List).cast<String>();
@@ -264,8 +264,8 @@ int?     selectedDay;
   });
 
   final url = attType == 0
-      ? '${_apiUrl}attendance/monthly?month=$selectedYearMonth'
-      : '${_apiUrl}attendance/piece?month=$selectedYearMonth';
+      ? '${_apiUrl}/attendance/monthly?month=$selectedYearMonth'
+      : '${_apiUrl}/attendance/piece?month=$selectedYearMonth';
 
   try {
     final res = await http.get(Uri.parse(url));
@@ -371,8 +371,8 @@ Future<void> fetchPresence() async {
 
   Future<void> _fetchSalaryYears() async {
     try {
-      final monthlyRes = await http.get(Uri.parse('${_apiUrl}attendance/years?type=monthly'));
-      final pieceRes = await http.get(Uri.parse('${_apiUrl}attendance/years?type=piece'));
+      final monthlyRes = await http.get(Uri.parse('${_apiUrl}/attendance/years?type=monthly'));
+      final pieceRes = await http.get(Uri.parse('${_apiUrl}/attendance/years?type=piece'));
       Set<int> allYears = {};
       if (monthlyRes.statusCode == 200) allYears.addAll((jsonDecode(monthlyRes.body) as List).cast<int>());
       if (pieceRes.statusCode == 200) allYears.addAll((jsonDecode(pieceRes.body) as List).cast<int>());
@@ -394,7 +394,7 @@ Future<void> fetchPresence() async {
     try {
       final type = selectedSalariesTab == 0 ? 'monthly' : 'piece';
       final res = await http.get(Uri.parse(
-          '${_apiUrl}attendance/months?year=$selectedSalaryYear&type=$type'));
+          '${_apiUrl}/attendance/months?year=$selectedSalaryYear&type=$type'));
       if (res.statusCode == 200) {
         setState(() {
           _salaryMonths = (jsonDecode(res.body) as List).cast<String>();
@@ -414,7 +414,7 @@ Future<void> fetchPresence() async {
     setState(() => salaryLoading = true);
     try {
       final monthlyRes = await http.get(Uri.parse(
-          '${_apiUrl}attendance/monthly?month=$selectedSalaryMonth'));
+          '${_apiUrl}/attendance/monthly?month=$selectedSalaryMonth'));
       monthlyAttendance = monthlyRes.statusCode == 200 ? jsonDecode(monthlyRes.body) : [];
 
       final pieceRes = await http.get(Uri.parse(
@@ -707,8 +707,7 @@ Future<void> _fetchAvailableDays() async {
 
   bool hasActiveLoan = false;
   if (employeeId != null && initial == null) {
-    final checkRes = await http.get(Uri.parse(
-      '$_apiUrl/loans/check/$employeeId'));
+    final checkRes = await http.get(Uri.parse('$_apiUrl/loans/check/$employeeId'));
     if (checkRes.statusCode == 200) {
       final data = jsonDecode(checkRes.body);
       hasActiveLoan = data['has_active_loan'] ?? false;
@@ -725,22 +724,20 @@ Future<void> _fetchAvailableDays() async {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 1. Employee picker
+              // 1. Employee selector
               DropdownButtonFormField<int>(
                 value: employeeId,
                 decoration: const InputDecoration(labelText: 'العامل'),
                 items: allEmployees.map((e) {
-                  return DropdownMenuItem(
+                  return DropdownMenuItem<int>(
                     value: e['id'] as int,
                     child: Text('${e['first_name']} ${e['last_name']}'),
                   );
                 }).toList(),
                 onChanged: (v) async {
                   setState(() => employeeId = v);
-                  // re–check active loan if selecting new employee
                   if (v != null && initial == null) {
-                    final resp = await http.get(Uri.parse(
-                      '$_apiUrl/loans/check/$v'));
+                    final resp = await http.get(Uri.parse('$_apiUrl/loans/check/$v'));
                     if (resp.statusCode == 200) {
                       final d = jsonDecode(resp.body);
                       setState(() => hasActiveLoan = d['has_active_loan'] ?? false);
@@ -758,7 +755,7 @@ Future<void> _fetchAvailableDays() async {
                 validator: (v) => v == null ? 'مطلوب' : null,
               ),
 
-              // 2. Active‑loan warning
+              // 2. Active-loan warning
               if (hasActiveLoan)
                 const Padding(
                   padding: EdgeInsets.only(top: 8.0),
@@ -824,7 +821,6 @@ Future<void> _fetchAvailableDays() async {
           ),
           ElevatedButton(
             onPressed: () async {
-              // validate form and business rules
               if (!_formKey.currentState!.validate()) return;
               if (hasActiveLoan && initial == null) {
                 ScaffoldMessenger.of(context).showSnackBar(
@@ -836,7 +832,6 @@ Future<void> _fetchAvailableDays() async {
                 return;
               }
 
-              // prepare payload
               final data = {
                 'employee_id': employeeId,
                 'amount': num.parse(amountController.text.trim()),
@@ -844,7 +839,6 @@ Future<void> _fetchAvailableDays() async {
                 'loan_date': selectedDate.toIso8601String(),
               };
 
-              // send to server
               if (initial == null) {
                 await http.post(
                   Uri.parse('$_apiUrl/loans'),
@@ -853,8 +847,7 @@ Future<void> _fetchAvailableDays() async {
                 );
               } else {
                 await http.put(
-                  Uri.parse(
-                    '$_apiUrl/loans/${initial!['id']}'),
+                  Uri.parse('$_apiUrl/loans/${initial!['id']}'),
                   headers: {'Content-Type': 'application/json'},
                   body: jsonEncode(data),
                 );
@@ -870,6 +863,8 @@ Future<void> _fetchAvailableDays() async {
     ),
   );
 }
+
+
 
 
   Future<void> deleteLoan(int id) async {
@@ -1190,7 +1185,9 @@ Future<void> _fetchAvailableDays() async {
               : filtered.isEmpty
                   ? const Center(child: Text('لا يوجد عمال هنا'))
                   : Center(
-                      child: Scrollbar(
+                      child:Align(
+            alignment: Alignment.topCenter,
+            child: Scrollbar(
                         controller: infoTableController,
                         thumbVisibility: true,
                         child: SingleChildScrollView(
@@ -1234,7 +1231,7 @@ Future<void> _fetchAvailableDays() async {
                                 ]);
                               }).toList(),
                             ),
-                          ),
+                          ),),
                         ),
                       ),
                     ),
@@ -1478,7 +1475,11 @@ Future<void> _fetchAvailableDays() async {
         ),
         const SizedBox(height: 16),
         Expanded(
-          child: Center(
+          child:Align(
+            alignment: Alignment.topCenter,
+            child: Center(
+            child:Align(
+            alignment: Alignment.topCenter,
             child: Scrollbar(
               controller: loansTableController,
               thumbVisibility: true,
@@ -1518,9 +1519,10 @@ Future<void> _fetchAvailableDays() async {
                       ]);
                     }).toList(),
                   ),
-                ),
+                ),),
               ),
             ),
+          ),
           ),
         ),
       ],
@@ -1557,7 +1559,11 @@ Future<void> _fetchAvailableDays() async {
         ),
         const SizedBox(height: 16),
         Expanded(
-          child: Center(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child:Center(
+            child:Align(
+            alignment: Alignment.topCenter,
             child: Scrollbar(
               controller: piecesTableController,
               thumbVisibility: true,
@@ -1600,7 +1606,8 @@ Future<void> _fetchAvailableDays() async {
                     }).toList(),
                   ),
                 ),
-              ),
+              ),),
+            ),
             ),
           ),
         ),
@@ -1618,7 +1625,7 @@ Future<void> _fetchAvailableDays() async {
             children: [
               ElevatedButton.icon(
                 icon: const Icon(Icons.add, color: Colors.white),
-                label: const Text('إضافة دين', style: TextStyle(color: Colors.white)),
+                label: const Text('إضافة سلفة', style: TextStyle(color: Colors.white)),
                 style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary),
                 onPressed: () => addOrEditDebt(),
               ),
@@ -1723,7 +1730,7 @@ Future<void> _fetchAvailableDays() async {
                   );
                   if (result != null) {
                     await http.post(
-                      Uri.parse('${_apiUrl}attendance'),
+                      Uri.parse('${_apiUrl}/attendance'),
                       headers: {'Content-Type': 'application/json'},
                       body: jsonEncode(result),
                     );
@@ -1960,7 +1967,9 @@ Future<void> _fetchAvailableDays() async {
   Widget _buildMonthlySalaryTable() {
     if (monthlyTableRows.isEmpty) return const Center(child: Text('لا يوجد بيانات رواتب هنا'));
     return Center(
-      child: Scrollbar(
+      child:Align(
+            alignment: Alignment.topCenter,
+            child: Scrollbar(
         controller: monthlySalaryTableController,
         thumbVisibility: true,
         child: SingleChildScrollView(
@@ -1991,7 +2000,7 @@ Future<void> _fetchAvailableDays() async {
                 ]);
               }).toList(),
             ),
-          ),
+          ),),
         ),
       ),
     );
@@ -2000,7 +2009,9 @@ Future<void> _fetchAvailableDays() async {
   Widget _buildPieceSalaryTable() {
     if (pieceTableRows.isEmpty) return const Center(child: Text('لا يوجد بيانات رواتب هنا'));
     return Center(
-      child: Scrollbar(
+      child:  Align(
+            alignment: Alignment.topCenter,
+            child:Scrollbar(
         controller: pieceSalaryTableController,
         thumbVisibility: true,
         child: SingleChildScrollView(
@@ -2031,7 +2042,7 @@ Future<void> _fetchAvailableDays() async {
                 ]);
               }).toList(),
             ),
-          ),
+          ),),
         ),
       ),
     );

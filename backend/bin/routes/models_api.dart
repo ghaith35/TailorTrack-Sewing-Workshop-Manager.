@@ -224,57 +224,72 @@ Router getModelsRoutes(PostgreSQLConnection db) {
   // Endpoint to mark a production batch as done and move to product_inventory
 router.post("/complete-production/<batchId>", (Request request, String batchId) async {
   try {
+    final batchIdInt = int.parse(batchId);
+
     await db.transaction((ctx) async {
-      // Get batch details
+      // 1. Lock & fetch the in-progress batch
       final batchResults = await ctx.query("""
         SELECT model_id, color, size, quantity
         FROM sewing.production_batches
         WHERE id = @batch_id AND status = 'in_progress'
         FOR UPDATE
-      """, substitutionValues: {'batch_id': int.parse(batchId)});
+      """, substitutionValues: {'batch_id': batchIdInt});
 
       if (batchResults.isEmpty) {
         throw Exception('Production batch not found or not in progress.');
       }
 
-      final batch = batchResults.first;
+      final batch   = batchResults.first;
       final modelId = batch[0] as int;
-      final color = batch[1] as String;
-      final size = batch[2] as String;
-      final quantity = batch[3] as int;
+      final color   = batch[1] as String;
+      final size    = batch[2] as String;
+      final quantity= batch[3] as int;
 
-      // Insert a new row in product_inventory for this batch (never merge with other batches)
+      // 2. Insert into inventory, or merge with existing on warehouse+model
       await ctx.query("""
-        INSERT INTO sewing.product_inventory
-          (warehouse_id, model_id, color, size, quantity, last_updated, production_batch_id)
-        VALUES (
+        INSERT INTO sewing.product_inventory (
+          warehouse_id,
+          model_id,
+          color,
+          size,
+          quantity,
+          last_updated,
+          production_batch_id
+        ) VALUES (
           (SELECT id FROM sewing.warehouses WHERE type = 'ready' LIMIT 1),
-          @model_id, @color, @size, @quantity, CURRENT_TIMESTAMP, @batch_id
+          @model_id,
+          @color,
+          @size,
+          @quantity,
+          CURRENT_TIMESTAMP,
+          @batch_id
         )
-        ON CONFLICT (warehouse_id, model_id, color, size, production_batch_id) DO UPDATE SET
-          quantity = sewing.product_inventory.quantity + @quantity,
+        ON CONFLICT ON CONSTRAINT product_inventory_wh_model_unique
+        DO UPDATE SET
+          quantity     = sewing.product_inventory.quantity + EXCLUDED.quantity,
           last_updated = CURRENT_TIMESTAMP
       """, substitutionValues: {
         'model_id': modelId,
-        'color': color,
-        'size': size,
+        'color'   : color,
+        'size'    : size,
         'quantity': quantity,
-        'batch_id': int.parse(batchId),
+        'batch_id': batchIdInt,
       });
 
-      // Update production batch status to 'completed'
+      // 3. Mark the production batch as completed
       await ctx.query("""
         UPDATE sewing.production_batches
         SET status = 'completed'
         WHERE id = @batch_id
-      """, substitutionValues: {'batch_id': int.parse(batchId)});
+      """, substitutionValues: {'batch_id': batchIdInt});
     });
 
     return Response.ok(
-      jsonEncode({'message': 'Production batch completed and added to inventory.'}),
+      jsonEncode({'message': 'Production batch completed and inventory updated.'}),
       headers: {'Content-Type': 'application/json'},
     );
-  } catch (e) {
+  } catch (e, st) {
+    print('Error completing production batch: $e\n$st');
     return Response.internalServerError(
       body: jsonEncode({'error': 'Failed to complete production batch: $e'}),
       headers: {'Content-Type': 'application/json'},

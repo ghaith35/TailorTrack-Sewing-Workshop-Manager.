@@ -709,7 +709,9 @@ if (loanRes.statusCode == 200) {
               : filtered.isEmpty
                   ? const Center(child: Text('لا يوجد عمال هنا'))
                   : Center(
-                      child: Scrollbar(
+                      child: Align(
+            alignment: Alignment.topCenter,
+            child:Scrollbar(
                         controller: infoTableController,
                         thumbVisibility: true,
                         child: SingleChildScrollView(
@@ -752,7 +754,7 @@ if (loanRes.statusCode == 200) {
                             ),
                           ),
                         ),
-                      ),
+                      ),),
                     ),
         ),
       ],
@@ -839,121 +841,196 @@ final pieceEmpRes = await http.get(
     setState(() => isDataLoading = false);
   }
 
-  Future<void> addOrEditLoan({Map? initial}) async {
-    int? employeeId = initial?['employee_id'] as int?;
-    final amountController = TextEditingController(text: initial?['amount']?.toString() ?? '');
-    int duration = initial?['duration_months'] as int? ?? 1;
-    DateTime selectedDate = initial != null && initial['loan_date'] != null ? DateTime.parse(initial['loan_date']) : DateTime.now();
-    final _formKey = GlobalKey<FormState>();
-    bool hasActiveLoan = false;
+  Future<void> addOrEditLoan({ Map? initial }) async {
+  int? employeeId = initial?['employee_id'] as int?;
+  final amountController = TextEditingController(text: initial?['amount']?.toString() ?? '');
+  int duration = initial?['duration_months'] as int? ?? 1;
+  DateTime selectedDate = initial != null && initial['loan_date'] != null
+      ? DateTime.parse(initial['loan_date'])
+      : DateTime.now();
+  final _formKey = GlobalKey<FormState>();
 
-    if (employeeId != null && initial == null) {
-      final checkRes = await http.get(Uri.parse('${globalServerUri.toString()}/employees/loans/check/$employeeId'));
-      if (checkRes.statusCode == 200) hasActiveLoan = jsonDecode(checkRes.body)['has_active_loan'] ?? false;
+  // State for “blocked until” logic:
+  bool hasActiveLoan = false;
+  DateTime? nextAvailable;
+
+  // On initial open, if creating new loan, check block status:
+  if (employeeId != null && initial == null) {
+    final checkRes = await http.get(
+      Uri.parse('${globalServerUri.toString()}/employees/loans/check/$employeeId')
+    );
+    if (checkRes.statusCode == 200) {
+      final data = jsonDecode(checkRes.body);
+      hasActiveLoan = data['has_active_loan'] as bool? ?? false;
+      if (data['next_available_date'] != null) {
+        nextAvailable = DateTime.parse(data['next_available_date']);
+      }
     }
+  }
 
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setState) {
-          return AlertDialog(
-            title: Text(initial == null ? 'إضافة دين' : 'تعديل دين'),
-            content: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<int>(
-                    value: employeeId,
-                    decoration: const InputDecoration(labelText: 'العامل'),
-                    items: allEmployees.map<DropdownMenuItem<int>>((e) {
-                      return DropdownMenuItem<int>(
-                        value: e['id'] as int,
-                        child: Text('${e['first_name']} ${e['last_name']}'),
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (context, setState) {
+        return AlertDialog(
+          title: Text(initial == null ? 'إضافة دين' : 'تعديل دين'),
+          content: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Employee selector
+                DropdownButtonFormField<int>(
+                  value: employeeId,
+                  decoration: const InputDecoration(labelText: 'العامل'),
+                  items: allEmployees.map<DropdownMenuItem<int>>((e) {
+                    return DropdownMenuItem<int>(
+                      value: e['id'] as int,
+                      child: Text('${e['first_name']} ${e['last_name']}'),
+                    );
+                  }).toList(),
+                  onChanged: (v) async {
+                    setState(() {
+                      employeeId = v;
+                      // reset block state when changing employee
+                      hasActiveLoan = false;
+                      nextAvailable = null;
+                    });
+                    if (v != null && initial == null) {
+                      final res = await http.get(
+                        Uri.parse('${globalServerUri.toString()}/employees/loans/check/$v')
                       );
-                    }).toList(),
-                    onChanged: (v) async {
-                      setState(() => employeeId = v);
-                      if (v != null && initial == null) {
-                        final checkRes = await http.get(Uri.parse('${globalServerUri.toString()}/employees/loans/check/$v'));
-                        if (checkRes.statusCode == 200) {
-                          hasActiveLoan = jsonDecode(checkRes.body)['has_active_loan'] ?? false;
-                          if (hasActiveLoan) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('هذا العامل لديه دين نشطة بالفعل'), backgroundColor: Colors.orange));
+                      if (res.statusCode == 200) {
+                        final d = jsonDecode(res.body);
+                        setState(() {
+                          hasActiveLoan = d['has_active_loan'] as bool? ?? false;
+                          if (d['next_available_date'] != null) {
+                            nextAvailable = DateTime.parse(d['next_available_date']);
                           }
+                        });
+                        if (hasActiveLoan && nextAvailable != null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'لا يمكن منح دين جديد حتى ${nextAvailable!.toLocal().toString().substring(0,10)}'
+                              ),
+                              backgroundColor: Colors.orange,
+                            )
+                          );
                         }
                       }
-                    },
-                    validator: (v) => v == null ? 'يرجى اختيار العامل' : null,
-                  ),
-                  if (hasActiveLoan) const Padding(padding: EdgeInsets.only(top: 8.0), child: Text('تحذير: هذا العامل لديه دين نشطة', style: TextStyle(color: Colors.orange))),
-                  TextFormField(
-                    controller: amountController,
-                    decoration: const InputDecoration(labelText: 'المبلغ'),
-                    keyboardType: TextInputType.number,
-                    validator: (v) {
-                      if (v == null || v.isEmpty) return 'مطلوب';
-                      final numVal = num.tryParse(v);
-                      if (numVal == null || numVal <= 0) return 'يجب أن يكون رقم إيجابي';
-                      return null;
-                    },
-                  ),
-                  DropdownButtonFormField<int>(
-                    value: duration,
-                    decoration: const InputDecoration(labelText: 'المدة (شهور)'),
-                    items: List.generate(12, (i) => i + 1).map((m) => DropdownMenuItem<int>(value: m, child: Text('$m'))).toList(),
-                    onChanged: (v) => setState(() => duration = v!),
-                    validator: (v) => v == null || v <= 0 ? 'يرجى اختيار مدة صالحة' : null,
-                  ),
-                  Text('تاريخ الدين: ${selectedDate.toLocal().toString().substring(0, 10)}'),
-                  ElevatedButton(
-                    child: const Text('اختر التاريخ'),
-                    onPressed: () async {
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: selectedDate,
-                        firstDate: DateTime(2000),
-                        lastDate: DateTime.now(),
-                        locale: const Locale('ar', 'AR'),
-                      );
-                      if (picked != null && picked != selectedDate) setState(() => selectedDate = picked);
-                    },
+                    }
+                  },
+                  validator: (v) => v == null ? 'يرجى اختيار العامل' : null,
+                ),
+
+                // Warning block message
+                if (hasActiveLoan && nextAvailable != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'لا يمكن منح دين جديد حتى ${nextAvailable!.toLocal().toString().substring(0,10)}',
+                    style: const TextStyle(color: Colors.orange),
                   ),
                 ],
-              ),
+
+                // Amount field
+                TextFormField(
+                  controller: amountController,
+                  decoration: const InputDecoration(labelText: 'المبلغ'),
+                  keyboardType: TextInputType.number,
+                  validator: (v) {
+                    if (v == null || v.isEmpty) return 'مطلوب';
+                    final numVal = num.tryParse(v);
+                    if (numVal == null || numVal <= 0) return 'يجب أن يكون رقم إيجابي';
+                    return null;
+                  },
+                ),
+
+                // Duration selector
+                DropdownButtonFormField<int>(
+                  value: duration,
+                  decoration: const InputDecoration(labelText: 'المدة (شهور)'),
+                  items: List.generate(12, (i) => i + 1)
+                    .map((m) => DropdownMenuItem<int>(value: m, child: Text('$m')))
+                    .toList(),
+                  onChanged: (v) => setState(() => duration = v!),
+                  validator: (v) => v == null || v <= 0 ? 'يرجى اختيار مدة صالحة' : null,
+                ),
+
+                // Loan date picker
+                const SizedBox(height: 8),
+                Text('تاريخ الدين: ${selectedDate.toLocal().toString().substring(0, 10)}'),
+                ElevatedButton(
+                  child: const Text('اختر التاريخ'),
+                  onPressed: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: selectedDate,
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime.now(),
+                      locale: const Locale('ar', 'AR'),
+                    );
+                    if (picked != null && picked != selectedDate) {
+                      setState(() {
+                        selectedDate = picked;
+                      });
+                    }
+                  },
+                ),
+              ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  if (_formKey.currentState!.validate()) {
-                    if (hasActiveLoan && initial == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا يمكن إضافة دين جديدة - العامل لديه دين نشطة'), backgroundColor: Colors.red));
-                      return;
-                    }
-                    final data = {
-                      'employee_id': employeeId,
-                      'amount': num.tryParse(amountController.text) ?? 0,
-                      'duration_months': duration,
-                      'loan_date': selectedDate.toIso8601String(),
-                    };
-                    if (initial == null) {
-                      http.post(Uri.parse(_loansUrl), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
-                    } else {
-                      http.put(Uri.parse('${globalServerUri.toString()}/employees/loans/${initial['id']}'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
-                    }
-                    Navigator.pop(context);
-                    fetchDataSection();
-                  }
-                },
-                child: const Text('حفظ'),
-              ),
-              TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-            ],
-          );
-        },
-      ),
-    );
-  }
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                if (!_formKey.currentState!.validate()) return;
+                if (hasActiveLoan && initial == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('لا يمكن إضافة دين جديدة - العامل لديه دين نشطة'),
+                      backgroundColor: Colors.red
+                    )
+                  );
+                  return;
+                }
+
+                final data = {
+                  'employee_id'      : employeeId,
+                  'amount'           : num.tryParse(amountController.text) ?? 0,
+                  'duration_months'  : duration,
+                  'loan_date'        : selectedDate.toIso8601String(),
+                };
+
+                if (initial == null) {
+                  http.post(
+                    Uri.parse(_loansUrl),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(data),
+                  );
+                } else {
+                  http.put(
+                    Uri.parse('${globalServerUri.toString()}/employees/loans/${initial!['id']}'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(data),
+                  );
+                }
+
+                Navigator.pop(context);
+                fetchDataSection();
+              },
+              child: const Text('حفظ'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
 
   Future<void> addOrEditPiece({Map? initial}) async {
     int? employeeId = initial?['employee_id'] as int?;
@@ -1227,7 +1304,8 @@ final pieceEmpRes = await http.get(
         ),
         const SizedBox(height: 16),
         Expanded(
-          child: Center(
+          child: Align(
+            alignment: Alignment.topCenter,
             child: Scrollbar(
               controller: loansTableController,
               thumbVisibility: true,
@@ -1300,7 +1378,8 @@ final pieceEmpRes = await http.get(
         ),
         const SizedBox(height: 16),
         Expanded(
-          child: Center(
+          child: Align(
+            alignment: Alignment.topCenter,
             child: Scrollbar(
               controller: piecesTableController,
               thumbVisibility: true,
@@ -1355,7 +1434,7 @@ final pieceEmpRes = await http.get(
             children: [
               ElevatedButton.icon(
                 icon: const Icon(Icons.add, color: Colors.white),
-                label: const Text('إضافة دين', style: TextStyle(color: Colors.white)),
+                label: const Text('إضافة السلف', style: TextStyle(color: Colors.white)),
                 style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary),
                 onPressed: () => addOrEditDebt(),
               ),
@@ -1606,72 +1685,113 @@ final pieceEmpRes = await http.get(
   }
 
   @override
-  Widget build(BuildContext context) {
-    final mainTabs = ['معلومات', 'البيانات', 'ادارة البيانات', 'رواتب العمال'];
-    final infoTabs = ['شهرياً', 'قطعة'];
-    final salariesTabs = ['شهرياً', 'قطعة'];
+Widget build(BuildContext context) {
+  final mainTabs = ['معلومات', 'البيانات', 'ادارة البيانات', 'رواتب العمال'];
+  final infoTabs = ['شهرياً', 'قطعة'];
+  final salariesTabs = ['شهرياً', 'قطعة'];
 
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(mainTabs.length, (i) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                child: ChoiceChip(
-                  label: Text(mainTabs[i]),
-                  selected: selectedTab == i,
-                  selectedColor: Theme.of(context).colorScheme.primary,
-                  labelStyle: TextStyle(color: selectedTab == i ? Colors.white : Theme.of(context).colorScheme.onSurface, fontWeight: FontWeight.bold),
-                  onSelected: (_) async {
-                    setState(() => selectedTab = i);
-                    if (i == 1 && _availableYears.isEmpty) {
-                      await _fetchAttendanceYears();
-                      if (_availableYears.isNotEmpty) await fetchAttendance();
-                    }
-                  },
+  return Directionality(
+    textDirection: TextDirection.rtl,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Top-level tabs
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(mainTabs.length, (i) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: ChoiceChip(
+                label: Text(mainTabs[i]),
+                selected: selectedTab == i,
+                selectedColor: Theme.of(context).colorScheme.primary,
+                labelStyle: TextStyle(
+                  color: selectedTab == i
+                      ? Colors.white
+                      : Theme.of(context).colorScheme.onSurface,
+                  fontWeight: FontWeight.bold,
                 ),
-              );
-            }),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: selectedTab == 0
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: List.generate(infoTabs.length, (i) {
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                            child: ChoiceChip(
-                              label: Text(infoTabs[i]),
-                              selected: selectedInfoTab == i,
-                              selectedColor: Theme.of(context).colorScheme.primary,
-                              labelStyle: TextStyle(color: selectedInfoTab == i ? Colors.white : Theme.of(context).colorScheme.onSurface, fontWeight: FontWeight.bold),
-                              onSelected: (_) => setState(() => selectedInfoTab = i),
+                onSelected: (_) async {
+                  setState(() => selectedTab = i);
+
+                  if (i == 1) {
+                    // البيانات (attendance)
+                    if (_availableYears.isEmpty) {
+                      await _fetchAttendanceYears();
+                    }
+                    if (_availableYears.isNotEmpty) {
+                      await fetchAttendance();
+                    }
+                  } else if (i == 2) {
+                    // ادارة البيانات (loans/pieces/debts)
+                    await fetchDataSection();
+                  } else if (i == 3) {
+                    // رواتب العمال (salaries)
+                    if (_salaryYears.isEmpty) {
+                      await _fetchSalaryYears();
+                    }
+                    if (selectedSalaryMonth != null) {
+                      await fetchSalariesData();
+                    }
+                  }
+                },
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 16),
+
+        // Content area
+        Expanded(
+          child: selectedTab == 0
+              // معلومات
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Sub-tabs: شهرياً / قطعة
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(infoTabs.length, (i) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                          child: ChoiceChip(
+                            label: Text(infoTabs[i]),
+                            selected: selectedInfoTab == i,
+                            selectedColor:
+                                Theme.of(context).colorScheme.primary,
+                            labelStyle: TextStyle(
+                              color: selectedInfoTab == i
+                                  ? Colors.white
+                                  : Theme.of(context).colorScheme.onSurface,
+                              fontWeight: FontWeight.bold,
                             ),
-                          );
-                        }),
-                      ),
-                      const SizedBox(height: 16),
-                      Expanded(child: _buildInfoTable()),
-                    ],
-                  )
-                : selectedTab == 1
-                    ? _buildAttendanceSection()
-                    : selectedTab == 2
-                        ? _buildDataSection()
-                        : _buildSalariesSection(salariesTabs),
-          ),
-        ],
-      ),
-    );
-  }
+                            onSelected: (_) =>
+                                setState(() => selectedInfoTab = i),
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 16),
+                    Expanded(child: _buildInfoTable()),
+                  ],
+                )
+
+              // بيانات الحضور
+              : selectedTab == 1
+                  ? _buildAttendanceSection()
+
+                  // ادارة البيانات
+                  : selectedTab == 2
+                      ? _buildDataSection()
+
+                      // رواتب العمال
+                      : _buildSalariesSection(salariesTabs),
+        ),
+      ],
+    ),
+  );
+}
+
 
   Widget _buildSalariesSection(List<String> salariesTabs) {
     return Column(
@@ -1743,8 +1863,9 @@ final pieceEmpRes = await http.get(
 
  Widget _buildMonthlySalaryTable() {
   if (monthlyTableRows.isEmpty) return const Center(child: Text('لا يوجد بيانات رواتب هنا'));
-  return Center(
-    child: Scrollbar(
+  return Align(
+            alignment: Alignment.topCenter,
+            child: Scrollbar(
       controller: monthlySalaryTableController,
       thumbVisibility: true,
       child: SingleChildScrollView(
@@ -1759,8 +1880,8 @@ final pieceEmpRes = await http.get(
               DataColumn(label: Text('الراتب', style: TextStyle(color: Colors.white))),
               DataColumn(label: Text('مجموع الساعات', style: TextStyle(color: Colors.white))),
               DataColumn(label: Text('الراتب الفعلي', style: TextStyle(color: Colors.white))),
-              DataColumn(label: Text('السلف', style: TextStyle(color: Colors.white))),
               DataColumn(label: Text('الديون', style: TextStyle(color: Colors.white))),
+              DataColumn(label: Text('السلف', style: TextStyle(color: Colors.white))),
               DataColumn(label: Text('الراتب النهائي', style: TextStyle(color: Colors.white))),
             ],
             rows: monthlyTableRows.map<DataRow>((row) {
@@ -1782,8 +1903,9 @@ final pieceEmpRes = await http.get(
 }
   Widget _buildPieceSalaryTable() {
   if (pieceTableRows.isEmpty) return const Center(child: Text('لا يوجد بيانات رواتب هنا'));
-  return Center(
-    child: Scrollbar(
+  return Align(
+            alignment: Alignment.topCenter,
+            child: Scrollbar(
       controller: pieceSalaryTableController,
       thumbVisibility: true,
       child: SingleChildScrollView(
@@ -1797,8 +1919,8 @@ final pieceEmpRes = await http.get(
               DataColumn(label: Text('الاسم الكامل', style: TextStyle(color: Colors.white))),
               DataColumn(label: Text('مجموع القطع', style: TextStyle(color: Colors.white))),
               DataColumn(label: Text('مجموع الأجر', style: TextStyle(color: Colors.white))),
-              DataColumn(label: Text('السلف', style: TextStyle(color: Colors.white))),
               DataColumn(label: Text('الديون', style: TextStyle(color: Colors.white))),
+              DataColumn(label: Text('السلف', style: TextStyle(color: Colors.white))),
               DataColumn(label: Text('الراتب النهائي', style: TextStyle(color: Colors.white))),
             ],
             rows: pieceTableRows.map<DataRow>((row) {

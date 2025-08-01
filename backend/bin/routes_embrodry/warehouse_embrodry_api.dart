@@ -92,40 +92,57 @@ Router getEmbrodryWarehouseRoutes(PostgreSQLConnection db) {
   });
 
   // POST /product-inventory
-  router.post('/product-inventory', (Request req) async {
-    try {
-      final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-      final mid   = _i(data['model_id']);
-      final qty   = _d(data['quantity']);
-      final color = data['color'] ?? '';
-      final size  = data['size_label'] ?? '';
-      if (mid == 0 || qty <= 0) {
-        return Response(400,
-            body: jsonEncode({'error': 'model_id and positive quantity required'}),
-            headers: {'Content-Type': 'application/json'});
-      }
-      final res = await db.query('''
-        INSERT INTO embroidery.product_inventory
-          (warehouse_id, model_id, color, size_label, quantity)
-        VALUES
-          (@w, @m, @c, @s, @q)
-        RETURNING id
-      ''', substitutionValues: {
-        'w': _i(data['warehouse_id'] ?? 1),
-        'm': mid,
-        'c': color,
-        's': size,
-        'q': qty,
-      });
-      return Response.ok(jsonEncode({'id': res.first[0]}),
-          headers: {'Content-Type': 'application/json'});
-    } catch (e, st) {
-      print('ERROR POST /product-inventory: $e\n$st');
-      return Response.internalServerError(
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json'});
+  // POST /product-inventory
+router.post('/product-inventory', (Request req) async {
+  try {
+    final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    final wid   = _i(data['warehouse_id'] ?? 1);
+    final mid   = _i(data['model_id']);
+    final color = (data['color'] ?? '').toString();
+    final size  = (data['size_label'] ?? '').toString();
+    final qty   = _d(data['quantity']);
+
+    if (mid == 0 || qty <= 0) {
+      return Response(400,
+        body: jsonEncode({
+          'error': 'model_id and positive quantity required'
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
     }
-  });
+
+    // INSERT … ON CONFLICT DO UPDATE
+    final res = await db.query(r'''
+      INSERT INTO embroidery.product_inventory
+        (warehouse_id, model_id, color, size_label, quantity)
+      VALUES
+        (@w, @m, @c, @s, @q)
+      ON CONFLICT (warehouse_id, model_id, color, size_label)
+      DO UPDATE
+        SET quantity     = embroidery.product_inventory.quantity + EXCLUDED.quantity,
+            last_updated = CURRENT_TIMESTAMP
+      RETURNING id
+    ''', substitutionValues: {
+      'w': wid,
+      'm': mid,
+      'c': color,
+      's': size,
+      'q': qty,
+    });
+
+    final newId = res.first[0] as int;
+    return Response.ok(
+      jsonEncode({'id': newId}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } catch (e, st) {
+    print('ERROR POST /product-inventory: $e\n$st');
+    return Response.internalServerError(
+      body: jsonEncode({'error': e.toString()}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
 
   // PUT /product-inventory/<id>
   router.put('/product-inventory/<id|[0-9]+>', (Request req, String id) async {

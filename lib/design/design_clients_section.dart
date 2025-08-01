@@ -252,9 +252,15 @@ String get _apiUrl => '${globalServerUri.toString()}/design/clients/';
 
         // Table
         Expanded(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Scrollbar(
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.vertical,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child:DataTable(
               headingRowColor: MaterialStateProperty.all(
                 Theme.of(context).colorScheme.primary,
               ),
@@ -288,7 +294,7 @@ String get _apiUrl => '${globalServerUri.toString()}/design/clients/';
                 ]);
               }).toList(),
             ),
-          ),
+          ),),),),
         ),
       ],
     );

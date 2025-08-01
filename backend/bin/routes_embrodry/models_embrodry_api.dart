@@ -148,12 +148,13 @@ Router getEmbrodryModelsRoutes(PostgreSQLConnection db) {
   });
 
   // ─── CREATE ────────────────────────────────────────────
-  router.post('/', (Request req) async {
-    try {
-      final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-      final DateTime d = DateTime.parse(data['model_date']);
-      final newId = await db.transaction((tx) async {
-        final res = await tx.query('''
+  // ─── CREATE ────────────────────────────────────────────
+router.post('/', (Request req) async {
+  try {
+    final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    final d = DateTime.parse(data['model_date'] as String);
+    final newId = await db.transaction((tx) async {
+      final res = await tx.query('''
         INSERT INTO embroidery.models
           (client_id, season_id, model_date,
            model_name, stitch_price, stitch_number,
@@ -161,75 +162,98 @@ Router getEmbrodryModelsRoutes(PostgreSQLConnection db) {
         VALUES
           (@cid, @sid, @d, @mn, @sp, @sn, @desc, @mt)
         RETURNING id
-        ''', substitutionValues: {
-          'cid': data['client_id'],
-          'sid': data['season_id'],
-          'd':   d,
-          'mn':  data['model_name'],
-          'sp':  _d(data['stitch_price']),
-          'sn':  _i(data['stitch_number']),
-          'desc':data['description'],
-          'mt':  data['model_type'],
-        });
-        return res.first[0] as int;
+      ''', substitutionValues: {
+        'cid': data['client_id'],
+        'sid': data['season_id'],
+        'd'  : d,
+        'mn' : data['model_name'],
+        'sp' : _d(data['stitch_price']),
+        'sn' : _i(data['stitch_number']),
+        'desc': data['description'],
+        'mt' : data['model_type'],
       });
-      return Response(201,
-          body: jsonEncode({'id': newId}),
-          headers: {'Content-Type': 'application/json'});
-    } catch (e, st) {
-      print('POST /embrodry/models error: $e\n$st');
-      return Response.internalServerError(
-        body: jsonEncode({'error': e.toString()}),
+      return res.first[0] as int;
+    });
+    return Response(201,
+      body: jsonEncode({'id': newId}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } on PostgreSQLException catch (e) {
+    if (e.code == '23505' /* unique_violation */) {
+      return Response(400,
+        body: jsonEncode({
+          'error': 'duplicate_model_name',
+          'message': 'اسم الموديل مستخدم مسبقاً'
+        }),
         headers: {'Content-Type': 'application/json'},
       );
     }
-  });
+    rethrow;  // let other errors bubble up
+  } catch (e, st) {
+    print('POST /embrodry/models error: $e\n$st');
+    return Response.internalServerError(
+      body: jsonEncode({'error': e.toString()}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
 
-  // ─── UPDATE ────────────────────────────────────────────
-  router.put('/<id|[0-9]+>', (Request req, String id) async {
-    try {
-      final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-      final DateTime d = DateTime.parse(data['model_date']);
-      final count = await db.execute('''
+// ─── UPDATE ────────────────────────────────────────────
+router.put('/<id|[0-9]+>', (Request req, String id) async {
+  try {
+    final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    final d = DateTime.parse(data['model_date'] as String);
+    final count = await db.execute('''
       UPDATE embroidery.models SET
         client_id     = @cid,
         season_id     = @sid,
         model_date    = @d,
         model_name    = @mn,
         stitch_price  = @sp,
-        stitch_number  = @sn,
+        stitch_number = @sn,
         description   = @desc,
         model_type    = @mt
       WHERE id = @id
-      ''', substitutionValues: {
-        'id':  int.parse(id),
-        'cid': data['client_id'],
-        'sid': data['season_id'],
-        'd':   d,
-        'mn':  data['model_name'],
-        'sp':  _d(data['stitch_price']),
-        'sn':  _i(data['stitch_number']),
-        'desc':data['description'],
-        'mt':  data['model_type'],
-      });
-      if (count == 0) {
-        return Response.notFound(
-          jsonEncode({'error': 'not found'}),
-          headers: {'Content-Type': 'application/json'},
-        );
-      }
-      return Response.ok(
-        jsonEncode({'status': 'updated'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    } catch (e, st) {
-      print('PUT /embrodry/models error: $e\n$st');
-      return Response.internalServerError(
-        body: jsonEncode({'error': e.toString()}),
+    ''', substitutionValues: {
+      'id'  : int.parse(id),
+      'cid' : data['client_id'],
+      'sid' : data['season_id'],
+      'd'   : d,
+      'mn'  : data['model_name'],
+      'sp'  : _d(data['stitch_price']),
+      'sn'  : _i(data['stitch_number']),
+      'desc': data['description'],
+      'mt'  : data['model_type'],
+    });
+    if (count == 0) {
+      return Response.notFound(
+        jsonEncode({'error': 'not found'}),
         headers: {'Content-Type': 'application/json'},
       );
     }
-  });
+    return Response.ok(
+      jsonEncode({'status': 'updated'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } on PostgreSQLException catch (e) {
+    if (e.code == '23505') {
+      return Response(400,
+        body: jsonEncode({
+          'error': 'duplicate_model_name',
+          'message': 'اسم الموديل مستخدم مسبقاً'
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+    rethrow;
+  } catch (e, st) {
+    print('PUT /embrodry/models error: $e\n$st');
+    return Response.internalServerError(
+      body: jsonEncode({'error': e.toString()}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
 
   // ─── DELETE ────────────────────────────────────────────
   router.delete('/<id|[0-9]+>', (Request req, String id) async {

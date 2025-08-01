@@ -468,196 +468,204 @@ String get baseUrl => '${globalServerUri.toString()}/embrodry/models/';
 
   // ─── Add/Edit Dialog ────────────────────────────────
   Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
-    final isEdit = m != null;
-    final _formKey = GlobalKey<FormState>();
+  final isEdit = m != null;
+  final _formKey = GlobalKey<FormState>();
 
-    // initial values
-    int? clientId  = m?['client_id'] as int?;
-    int? seasonId  = m?['season_id'] as int?;
-    String modelType = (m?['model_type'] as String?) ?? 'حطة';
-    DateTime modelDate = m != null
-        ? DateTime.parse(m!['model_date'] as String)
-        : DateTime.now();
+  // initial values
+  int? clientId    = m?['client_id'] as int?;
+  int? seasonId    = m?['season_id'] as int?;
+  String modelType = (m?['model_type'] as String?) ?? 'حطة';
+  DateTime modelDate = m != null
+      ? DateTime.parse(m['model_date'] as String)
+      : DateTime.now();
 
-    // controllers
-    final nameCtl        = TextEditingController(text: m?['model_name'] ?? '');
-    final stitchPriceCtl = TextEditingController(text: m?['stitch_price']?.toString() ?? '');
-    final stitchNumCtl   = TextEditingController(text: m?['stitch_number']?.toString() ?? '');
-    final descCtl        = TextEditingController(text: m?['description'] ?? '');
+  // controllers
+  final nameCtl        = TextEditingController(text: m?['model_name'] ?? '');
+  final stitchPriceCtl = TextEditingController(text: m?['stitch_price']?.toString() ?? '');
+  final stitchNumCtl   = TextEditingController(text: m?['stitch_number']?.toString() ?? '');
+  final descCtl        = TextEditingController(text: m?['description'] ?? '');
 
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(builder: (ctx, setD) {
-        Future<void> pickDate() async {
-          final p = await showDatePicker(
-            context: ctx,
-            initialDate: modelDate,
-            firstDate: DateTime(2000),
-            lastDate: DateTime(2100),
-          );
-          if (p != null) setD(() => modelDate = p);
-        }
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(builder: (ctx, setD) {
+      Future<void> pickDate() async {
+        final p = await showDatePicker(
+          context: ctx,
+          initialDate: modelDate,
+          firstDate: DateTime(2000),
+          lastDate: DateTime(2100),
+        );
+        if (p != null) setD(() => modelDate = p);
+      }
 
-        return AlertDialog(
-          title: Text(isEdit ? 'تعديل موديل' : 'إضافة موديل'),
-          content: Form(
-            key: _formKey,
-            child: SizedBox(
-              width: 520,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // date picker
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text('تاريخ: ${_fmtDate(modelDate.toIso8601String())}'),
-                      trailing: const Icon(Icons.calendar_today),
-                      onTap: pickDate,
-                    ),
-                    const SizedBox(height: 8),
+      return AlertDialog(
+        title: Text(isEdit ? 'تعديل موديل' : 'إضافة موديل'),
+        content: Form(
+          key: _formKey,
+          child: SizedBox(
+            width: 520,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // date picker
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('تاريخ: ${_fmtDate(modelDate.toIso8601String())}'),
+                    trailing: const Icon(Icons.calendar_today),
+                    onTap: pickDate,
+                  ),
+                  const SizedBox(height: 8),
 
-                    // client dropdown
-                    DropdownButtonFormField<int?>(
-                      decoration: const InputDecoration(labelText: 'العميل'),
-                      value: clientId,
-                      items: [
-                        const DropdownMenuItem(value: null, child: Text('بدون عميل')),
-                        ..._clients.map((c) => DropdownMenuItem<int?>(
-                          value: c['id'] as int,
-                          child: Text(c['full_name'] as String),
-                        )),
-                      ],
-                      onChanged: (v) => setD(() => clientId = v),
-                    ),
-                    const SizedBox(height: 8),
+                  // client dropdown
+                  DropdownButtonFormField<int?>(
+                    decoration: const InputDecoration(labelText: 'العميل'),
+                    value: clientId,
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text('بدون عميل')),
+                      ..._clients.map((c) => DropdownMenuItem<int?>(
+                        value: c['id'] as int,
+                        child: Text(c['full_name'] as String),
+                      )),
+                    ],
+                    onChanged: (v) => setD(() => clientId = v),
+                  ),
+                  const SizedBox(height: 8),
 
-                    // season dropdown
-                    DropdownButtonFormField<int?>(
-                      decoration: const InputDecoration(labelText: 'الموسم'),
-                      value: seasonId,
-                      items: [
-                        const DropdownMenuItem(value: null, child: Text('بدون موسم')),
-                        ..._seasons.map((s) => DropdownMenuItem<int?>(
-                          value: s['id'] as int,
-                          child: Text(s['name'] as String),
-                        )),
-                      ],
-                      onChanged: (v) => setD(() => seasonId = v),
-                    ),
-                    const SizedBox(height: 8),
+                  // season dropdown
+                  DropdownButtonFormField<int?>(
+                    decoration: const InputDecoration(labelText: 'الموسم'),
+                    value: seasonId,
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text('بدون موسم')),
+                      ..._seasons.map((s) => DropdownMenuItem<int?>(
+                        value: s['id'] as int,
+                        child: Text(s['name'] as String),
+                      )),
+                    ],
+                    onChanged: (v) => setD(() => seasonId = v),
+                  ),
+                  const SizedBox(height: 8),
 
-                    // model name
-                    TextFormField(
-                      controller: nameCtl,
-                      decoration: const InputDecoration(labelText: 'اسم الموديل'),
-                      validator: (v) =>
-                          v == null || v.trim().isEmpty ? 'اسم الموديل مطلوب' : null,
-                    ),
-                    const SizedBox(height: 8),
+                  // model name
+                  TextFormField(
+                    controller: nameCtl,
+                    decoration: const InputDecoration(labelText: 'اسم الموديل'),
+                    validator: (v) =>
+                        v == null || v.trim().isEmpty ? 'اسم الموديل مطلوب' : null,
+                  ),
+                  const SizedBox(height: 8),
 
-                    // stitch price
-                    TextFormField(
-                      controller: stitchPriceCtl,
-                      decoration: const InputDecoration(labelText: 'سعر الغرزة'),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      validator: (v) {
-                        final n = double.tryParse(v ?? '');
-                        if (n == null || n <= 0) return 'أدخل سعراً صالحاً';
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 8),
+                  // stitch price
+                  TextFormField(
+                    controller: stitchPriceCtl,
+                    decoration: const InputDecoration(labelText: 'سعر الغرزة'),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    validator: (v) {
+                      final n = double.tryParse(v ?? '');
+                      if (n == null || n <= 0) return 'أدخل سعراً صالحاً';
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 8),
 
-                    // stitch number
-                    TextFormField(
-                      controller: stitchNumCtl,
-                      decoration: const InputDecoration(labelText: 'عدد الغرز'),
-                      keyboardType: TextInputType.number,
-                      validator: (v) {
-                        final i = int.tryParse(v ?? '');
-                        if (i == null || i <= 0) return 'أدخل عدداً صالحاً';
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 8),
+                  // stitch number
+                  TextFormField(
+                    controller: stitchNumCtl,
+                    decoration: const InputDecoration(labelText: 'عدد الغرز'),
+                    keyboardType: TextInputType.number,
+                    validator: (v) {
+                      final i = int.tryParse(v ?? '');
+                      if (i == null || i <= 0) return 'أدخل عدداً صالحاً';
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 8),
 
-                    // model type
-                    Row(children: [
-                      Expanded(
-                        child: RadioListTile<String>(
-                          title: const Text('سحبة'),
-                          value: 'سحبة',
-                          groupValue: modelType,
-                          onChanged: (v) => setD(() => modelType = v!),
-                        ),
+                  // model type
+                  Row(children: [
+                    Expanded(
+                      child: RadioListTile<String>(
+                        title: const Text('سحبة'),
+                        value: 'سحبة',
+                        groupValue: modelType,
+                        onChanged: (v) => setD(() => modelType = v!),
                       ),
-                      Expanded(
-                        child: RadioListTile<String>(
-                          title: const Text('حطة'),
-                          value: 'حطة',
-                          groupValue: modelType,
-                          onChanged: (v) => setD(() => modelType = v!),
-                        ),
-                      ),
-                    ]),
-                    const SizedBox(height: 8),
-
-                    // description
-                    TextFormField(
-                      controller: descCtl,
-                      decoration: const InputDecoration(labelText: 'الوصف'),
-                      maxLines: 2,
                     ),
-                  ],
-                ),
+                    Expanded(
+                      child: RadioListTile<String>(
+                        title: const Text('حطة'),
+                        value: 'حطة',
+                        groupValue: modelType,
+                        onChanged: (v) => setD(() => modelType = v!),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 8),
+
+                  // description
+                  TextFormField(
+                    controller: descCtl,
+                    decoration: const InputDecoration(labelText: 'الوصف'),
+                    maxLines: 2,
+                  ),
+                ],
               ),
             ),
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
-            ElevatedButton(
-              onPressed: () async {
-                if (!_formKey.currentState!.validate()) return;
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              if (!_formKey.currentState!.validate()) return;
 
-                final payload = {
-                  'client_id':    clientId,
-                  'season_id':    seasonId,
-                  'model_date':   modelDate.toIso8601String(),
-                  'model_name':   nameCtl.text.trim(),
-                  'stitch_price': double.parse(stitchPriceCtl.text),
-                  'stitch_number':int.parse(stitchNumCtl.text),
-                  'description':  descCtl.text.trim(),
-                  'model_type':   modelType,
-                };
+              final payload = {
+                'client_id':     clientId,
+                'season_id':     seasonId,
+                'model_date':    modelDate.toIso8601String(),
+                'model_name':    nameCtl.text.trim(),
+                'stitch_price':  double.parse(stitchPriceCtl.text),
+                'stitch_number': int.parse(stitchNumCtl.text),
+                'description':   descCtl.text.trim(),
+                'model_type':    modelType,
+              };
 
-                try {
-                  final uri = isEdit
-                      ? Uri.parse('$baseUrl${m!['id']}')
-                      : Uri.parse(baseUrl);
-                  final res = isEdit
-                      ? await http.put(uri,
-                          headers: {'Content-Type': 'application/json'},
-                          body: jsonEncode(payload))
-                      : await http.post(uri,
-                          headers: {'Content-Type': 'application/json'},
-                          body: jsonEncode(payload));
+              try {
+                final uri = isEdit
+                    ? Uri.parse('$baseUrl${m!['id']}')
+                    : Uri.parse(baseUrl);
+                final res = isEdit
+                    ? await http.put(uri,
+                        headers: {'Content-Type': 'application/json'},
+                        body: jsonEncode(payload))
+                    : await http.post(uri,
+                        headers: {'Content-Type': 'application/json'},
+                        body: jsonEncode(payload));
 
-                  final ok = isEdit ? res.statusCode == 200 : res.statusCode == 201;
-                  if (!ok) throw Exception(res.body);
-
-                  Navigator.pop(ctx);
-                  _snack('تم الحفظ');
-                  await _fetchModels();
-                } catch (e) {
-                  _snack('خطأ: $e', error: true);
+                final success = isEdit ? res.statusCode == 200 : res.statusCode == 201;
+                if (!success) {
+                  final err = jsonDecode(res.body) as Map<String, dynamic>;
+                  if (err['error'] == 'duplicate_model_name') {
+                    _snack('هذا الاسم مستخدم مسبقاً، اختر اسماً آخر', error: true);
+                    return;
+                  }
+                  throw Exception('خطأ في الخادم: ${res.body}');
                 }
-              },
-              child: Text(isEdit ? 'تحديث' : 'إضافة'),
-            ),
-          ],
-        );
-      }),
-    );
-  }
+
+                Navigator.pop(ctx);
+                _snack('تم الحفظ');
+                await _fetchModels();
+              } catch (e) {
+                _snack('خطأ: $e', error: true);
+              }
+            },
+            child: Text(isEdit ? 'تحديث' : 'إضافة'),
+          ),
+        ],
+      );
+    }),
+  );
+}
+
 }

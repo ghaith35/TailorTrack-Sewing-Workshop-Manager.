@@ -41,8 +41,13 @@ dependencies:
   intl: ^0.20.2
   file_picker: ^5.2.5
   shared_preferences: ^2.0.15
-
+  crypto: ^3.0.0
+  pointycastle: ^3.4.0
+  flutter_secure_storage: ^8.0.0
+  win32: ^5.14.0
   fl_chart: ^0.60.0
+  basic_utils: ^5.7.0
+
 
 
   

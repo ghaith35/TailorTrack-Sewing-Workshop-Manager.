@@ -512,10 +512,11 @@ class _DesignModelsSectionState extends State<DesignModelsSection> {
 Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
   final isEdit = m != null;
 
-  int? clientId  = m?['client_id'];
-  int? seasonId  = m?['season_id'];
+  // Initial values
+  int? clientId    = m?['client_id'];
+  int? seasonId    = m?['season_id'];
   DateTime? modelDate = m != null
-      ? DateTime.tryParse(m['model_date'] ?? '')
+      ? DateTime.tryParse(m['model_date'] as String)
       : DateTime.now();
 
   // Controllers for text fields
@@ -552,7 +553,7 @@ Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
               key: _formKey,
               child: SingleChildScrollView(
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  // Client
+                  // Client selector
                   DropdownButtonFormField<int>(
                     value: clientId,
                     decoration: const InputDecoration(labelText: 'العميل'),
@@ -592,14 +593,12 @@ Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
                     onTap: pickDate,
                   ),
                   if (modelDate == null)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 12),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'الرجاء اختيار التاريخ',
-                          style: TextStyle(color: Colors.red[700], fontSize: 12),
-                        ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'الرجاء اختيار التاريخ',
+                        style:
+                            TextStyle(color: Colors.red[700], fontSize: 12),
                       ),
                     ),
                   const SizedBox(height: 8),
@@ -607,7 +606,8 @@ Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
                   // Model name
                   TextFormField(
                     controller: modelNameCtl,
-                    decoration: const InputDecoration(labelText: 'اسم الموديل'),
+                    decoration:
+                        const InputDecoration(labelText: 'اسم الموديل'),
                     validator: (v) => (v == null || v.trim().isEmpty)
                         ? 'اسم الموديل مطلوب'
                         : null,
@@ -617,14 +617,15 @@ Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
                   // Marker name
                   TextFormField(
                     controller: markerCtl,
-                    decoration: const InputDecoration(labelText: 'اسم الماركر'),
+                    decoration:
+                        const InputDecoration(labelText: 'اسم الماركر'),
                     validator: (v) => (v == null || v.trim().isEmpty)
                         ? 'اسم الماركر مطلوب'
                         : null,
                   ),
                   const SizedBox(height: 8),
 
-                  // الطول (no validator)
+                  // Length (no validator)
                   TextFormField(
                     controller: lengthCtl,
                     decoration: const InputDecoration(labelText: 'الطول'),
@@ -632,7 +633,7 @@ Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
                   ),
                   const SizedBox(height: 8),
 
-                  // العرض (no validator)
+                  // Width (no validator)
                   TextFormField(
                     controller: widthCtl,
                     decoration: const InputDecoration(labelText: 'العرض'),
@@ -640,7 +641,7 @@ Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
                   ),
                   const SizedBox(height: 8),
 
-                  // نسبة الإستغلال % (no validator)
+                  // Util % (no validator)
                   TextFormField(
                     controller: utilCtl,
                     decoration:
@@ -649,7 +650,7 @@ Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
                   ),
                   const SizedBox(height: 8),
 
-                  // Placed/Unplaced (no validator)
+                  // Placed / Unplaced
                   TextFormField(
                     controller: placedCtl,
                     decoration:
@@ -674,23 +675,22 @@ Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
             ),
             ElevatedButton(
               onPressed: () async {
-                // require form + date
-                if (_formKey.currentState!.validate() == false ||
-                    modelDate == null) {
+                // Validate form + date
+                if (!_formKey.currentState!.validate() || modelDate == null) {
                   return;
                 }
 
                 final payload = {
-                  'client_id'   : clientId,
-                  'season_id'   : seasonId,
-                  'model_date'  : modelDate!.toIso8601String(),
-                  'model_name'  : modelNameCtl.text.trim(),
-                  'marker_name' : markerCtl.text.trim(),
-                  'length'      : double.tryParse(lengthCtl.text) ?? 0,
-                  'width'       : double.tryParse(widthCtl.text) ?? 0,
-                  'util_percent': double.tryParse(utilCtl.text) ?? 0,
-                  'placed'      : placedCtl.text.trim(),
-                  'description' : descCtl.text.trim(),
+                  'client_id'    : clientId,
+                  'season_id'    : seasonId,
+                  'model_date'   : modelDate!.toIso8601String(),
+                  'model_name'   : modelNameCtl.text.trim(),
+                  'marker_name'  : markerCtl.text.trim(),
+                  'length'       : double.tryParse(lengthCtl.text) ?? 0,
+                  'width'        : double.tryParse(widthCtl.text) ?? 0,
+                  'util_percent' : double.tryParse(utilCtl.text) ?? 0,
+                  'placed'       : placedCtl.text.trim(),
+                  'description'  : descCtl.text.trim(),
                 };
 
                 try {
@@ -701,17 +701,31 @@ Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
                       headers: {'Content-Type': 'application/json'},
                       body: jsonEncode(payload),
                     );
-                    if (res.statusCode != 200) throw Exception(res.body);
                   } else {
                     res = await http.post(
                       Uri.parse(baseUrl),
                       headers: {'Content-Type': 'application/json'},
                       body: jsonEncode(payload),
                     );
-                    if (res.statusCode != 201) throw Exception(res.body);
                   }
+
+                  // Handle duplicate-name (409) from server
+                  if (res.statusCode == 409) {
+                    final body = jsonDecode(res.body);
+                    if (body['error'] == 'duplicate_name') {
+                      _snack('اسم الموديل موجود بالفعل', error: true);
+                      return;
+                    }
+                  }
+
+                  // Expect 201 on create, 200 on update
+                  final okCode = isEdit ? 200 : 201;
+                  if (res.statusCode != okCode) {
+                    throw Exception('(${res.statusCode}) ${res.body}');
+                  }
+
                   Navigator.pop(ctx);
-                  _snack('تم الحفظ');
+                  _snack(isEdit ? 'تم التحديث' : 'تم الإضافة');
                   await _fetchModels();
                 } catch (e) {
                   _snack('خطأ في الحفظ: $e', error: true);
@@ -725,4 +739,5 @@ Future<void> _addOrEdit({Map<String, dynamic>? m}) async {
     ),
   );
 }
+
 }

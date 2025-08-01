@@ -26,7 +26,7 @@ class _EmbroideryReturnsSectionState extends State<EmbroideryReturnsSection> {
   String? selectedMonth;
 
   // API base URL
-String get baseUrl => '${globalServerUri.toString()}/embrodry/returns/';
+String get baseUrl => '${globalServerUri.toString()}';
 
   @override
   void initState() {
@@ -62,7 +62,7 @@ String get baseUrl => '${globalServerUri.toString()}/embrodry/returns/';
   }
 
   Future<void> _fetchReturns() async {
-    final response = await http.get(Uri.parse(baseUrl));
+    final response = await http.get(Uri.parse('${baseUrl}/embrodry/returns/'));
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body) as List;
       setState(() {
@@ -87,13 +87,13 @@ String get baseUrl => '${globalServerUri.toString()}/embrodry/returns/';
 
   Future<void> _fetchMaterials() async {
     List<dynamic> materials = [];
-    final typesRes = await http.get(Uri.parse('http://localhost:8888/embrodry/warehouse/material-types'));
+    final typesRes = await http.get(Uri.parse('${baseUrl}/embrodry/warehouse/material-types'));
     if (typesRes.statusCode == 200) {
       final types = jsonDecode(typesRes.body) as List;
       for (final type in types) {
         final typeId = type['id'];
         final matsRes = await http.get(
-          Uri.parse('http://localhost:8888/embrodry/warehouse/materials?type_id=$typeId'),
+          Uri.parse('${baseUrl}/embrodry/warehouse/materials?type_id=$typeId'),
         );
         if (matsRes.statusCode == 200) {
           final matsJson = jsonDecode(matsRes.body);
@@ -383,7 +383,7 @@ String get baseUrl => '${globalServerUri.toString()}/embrodry/returns/';
 
                         try {
                           final resp = await http.post(
-                            Uri.parse(baseUrl),
+                            Uri.parse('${baseUrl}/embrodry/returns/'),
                             headers: {'Content-Type': 'application/json'},
                             body: jsonEncode(payload),
                           );
@@ -411,7 +411,7 @@ String get baseUrl => '${globalServerUri.toString()}/embrodry/returns/';
 
   Future<List<dynamic>> _getFactureModels(int factureId) async {
     final response = await http.get(
-      Uri.parse('$baseUrl$factureId'),
+      Uri.parse('${baseUrl}/embrodry/returns/${factureId}'),
     );
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -516,7 +516,7 @@ String get baseUrl => '${globalServerUri.toString()}/embrodry/returns/';
     );
     if (confirmed == true) {
       try {
-        final resp = await http.delete(Uri.parse('$baseUrl$returnId'));
+        final resp = await http.delete(Uri.parse('${baseUrl}/embrodry/returns/${returnId}'));
         if (resp.statusCode == 200) {
           _showSnackBar('تم حذف المرتجع بنجاح', color: Colors.green);
           await _fetchReturns();
@@ -532,7 +532,7 @@ String get baseUrl => '${globalServerUri.toString()}/embrodry/returns/';
 
   Future<void> _validateReturn(int returnId) async {
     try {
-      final resp = await http.patch(Uri.parse('$baseUrl$returnId/validate'));
+      final resp = await http.patch(Uri.parse('${baseUrl}/embrodry/returns/${returnId}/validate'));
       if (resp.statusCode == 200) {
         _showSnackBar('تم تأكيد الجاهزية بنجاح!', color: Colors.green);
         await _fetchReturns();
