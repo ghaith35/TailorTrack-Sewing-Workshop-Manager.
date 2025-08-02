@@ -784,6 +784,50 @@ router.get('/attendance/piece', (Request request) async {
       return Response.internalServerError(body: 'Internal Server Error: $e');
     }
   });
+  // ─── Hard-delete an embroidery employee and all their data ───────────────────
+  router.delete('/hard/<id|[0-9]+>', (Request req, String id) async {
+    final empId = int.parse(id);
+
+    await db.transaction((txn) async {
+      // 1) Attendance
+      await txn.query(
+        'DELETE FROM embroidery.employee_attendance WHERE employee_id = @eid',
+        substitutionValues: {'eid': empId},
+      );
+      // 2) Piece records
+      await txn.query(
+        'DELETE FROM embroidery.piece_records WHERE employee_id = @eid',
+        substitutionValues: {'eid': empId},
+      );
+      // 3) Loan installments → loans
+      await txn.query(
+        '''DELETE FROM embroidery.employee_loan_installments
+           WHERE loan_id IN (
+             SELECT id FROM embroidery.employee_loans WHERE employee_id = @eid
+           )''',
+        substitutionValues: {'eid': empId},
+      );
+      await txn.query(
+        'DELETE FROM embroidery.employee_loans WHERE employee_id = @eid',
+        substitutionValues: {'eid': empId},
+      );
+      // 4) Debts
+      await txn.query(
+        'DELETE FROM embroidery.employee_debts WHERE employee_id = @eid',
+        substitutionValues: {'eid': empId},
+      );
+      // 5) Finally, the employee record
+      await txn.query(
+        'DELETE FROM embroidery.employees WHERE id = @eid',
+        substitutionValues: {'eid': empId},
+      );
+    });
+
+    return Response.ok(
+      jsonEncode({'ok': true}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  });
 
   // // Check if employee has active loan
   // router.get('/loans/check/<id|[0-9]+>', (Request request, String id) async {

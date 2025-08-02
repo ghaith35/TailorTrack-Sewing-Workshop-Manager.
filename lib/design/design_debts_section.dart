@@ -203,14 +203,8 @@ String get baseUrl => '${globalServerUri.toString()}/design/debts';
     _cliYears = years.toList()..sort((a, b) => b.compareTo(a));
     _cliMonths = months.toList()..sort();
 
-    _fCli = _clientDebts.where((e) {
-      final d = e['date'] as String?;
-      if (d == null || !d.contains('-')) return true;
-      final parts = d.split('-');
-      final yrOk = parts[0] == _selCliYear.toString();
-      final moOk = parts[1] == _selCliMonth;
-      return yrOk && moOk; // أو true لعدم الفلترة
-    }).toList();
+     _fCli = List<Map<String, dynamic>>.from(_clientDebts);
+
 
     _fCli.sort((a, b) {
       final da = ((b['debt'] ?? 0) as num).toDouble();

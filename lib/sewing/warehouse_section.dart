@@ -58,7 +58,7 @@ String get _apiUrl => '${globalServerUri.toString()}';
       if (res.statusCode == 200) {
         readyProducts = jsonDecode(res.body) as List;
       } else {
-        throw Exception('فشل في جلب البضاعة الجاهزة');
+        // throw Exception('فشل في جلب البضاعة الجاهزة');
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));

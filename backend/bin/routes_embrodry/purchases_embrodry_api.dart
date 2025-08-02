@@ -60,7 +60,7 @@ Router getEmbrodryPurchasesRoutes(PostgreSQLConnection db) {
         'id'                      : p['id'],
         'purchase_date'           : p['purchase_date']?.toString(),
         'supplier_id'             : p['supplier_id'],
-        'supplier_name'           : pr['suppliers']?['full_name'],
+'supplier_name': pr['suppliers']?['supplier_name'],
         'driver'                  : p['driver'],
         'amount_paid_on_creation' : paid0,
         'extra_paid'              : extra,
@@ -414,27 +414,68 @@ Router getEmbrodryPurchasesRoutes(PostgreSQLConnection db) {
   // });
 
   // ============= Delete purchase ==============================
-  router.delete('/<id|[0-9]+>', (Request req, String id) async {
-    final pid = int.parse(id);
+  // ─── Delete a purchase ────────────────────────────────────────────────
+router.delete('/<id|[0-9]+>', (Request req, String id) async {
+  final pid = int.parse(id);
 
-    // rollback quantities
-    final old = await db.mappedResultsQuery(
-      'SELECT material_id, quantity FROM embroidery.purchase_items WHERE purchase_id=@pid',
+  // 1) Find any item where stock < purchase quantity
+  final insufficient = await db.mappedResultsQuery(r'''
+    SELECT
+      pi.material_id,
+      pi.quantity      AS required_qty,
+      m.stock_quantity AS available_qty,
+      m.code           AS material_code
+    FROM sewing.purchase_items pi
+    JOIN sewing.materials m
+      ON m.id = pi.material_id
+    WHERE pi.purchase_id = @pid
+      AND m.stock_quantity < pi.quantity
+  ''', substitutionValues: {'pid': pid});
+
+  if (insufficient.isNotEmpty) {
+    final row  = insufficient.first;
+    final code = row['materials']!['material_code'];
+    final reqQ = row['purchase_items']!['required_qty'];
+    final avl  = row['materials']!['available_qty'];
+    return Response(
+      400,
+      body: jsonEncode({
+        'error':
+          'لا يمكن حذف هذه الفاتورة لأن المخزون غير كافٍ للمادة "$code". '
+          'المتوفر: $avl، المطلوب: $reqQ'
+      }),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+
+  // 2) Roll back all items
+  await db.transaction((txn) async {
+    // subtract quantities
+    await txn.query(r'''
+      UPDATE sewing.materials m
+         SET stock_quantity = m.stock_quantity - pi.quantity
+      FROM sewing.purchase_items pi
+      WHERE pi.purchase_id = @pid
+        AND m.id = pi.material_id
+    ''', substitutionValues: {'pid': pid});
+
+    // delete items
+    await txn.query(
+      'DELETE FROM sewing.purchase_items WHERE purchase_id = @pid',
       substitutionValues: {'pid': pid});
-    for (final oi in old) {
-      await db.query(
-        'UPDATE embroidery.materials SET stock_quantity = stock_quantity - @q WHERE id=@mid',
-        substitutionValues: {
-          'q'  : oi['purchase_items']!['quantity'],
-          'mid': oi['purchase_items']!['material_id']
-        });
-    }
 
-    await db.query('DELETE FROM embroidery.purchases WHERE id=@id',
-        substitutionValues: {'id': pid});
-    return Response.ok(jsonEncode({'status': 'deleted'}),
-        headers: {'Content-Type': 'application/json'});
+    // delete purchase
+    await txn.query(
+      'DELETE FROM sewing.purchases WHERE id = @pid',
+      substitutionValues: {'pid': pid});
   });
+
+  return Response.ok(
+    jsonEncode({'status': 'deleted'}),
+    headers: {'Content-Type': 'application/json'},
+  );
+});
+
 
   return router;
 }

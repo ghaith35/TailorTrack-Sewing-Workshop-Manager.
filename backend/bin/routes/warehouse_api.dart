@@ -2,6 +2,12 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:postgres/postgres.dart';
 import 'dart:convert';
+num _num(dynamic v) => v == null
+    ? 0.0
+    : (v is num ? v : (num.tryParse(v.toString()) ?? 0.0));
+int _int(dynamic v) => v == null
+    ? 0
+    : (v is int ? v : (int.tryParse(v.toString()) ?? 0));
 
 // Helper functions to parse numbers safely
 num parseNum(dynamic value) => value is num ? value : (num.tryParse(value.toString()) ?? 0);
@@ -178,44 +184,92 @@ router.post('/recalc-global-prices', (Request req) async {
 });
 
   // Updated /product-inventory endpoint
-    // GET /design/warehouse/product-inventory
-  router.get('/product-inventory', (Request req) async {
-    try {
-      final rows = await db.query(r'''
-        SELECT
-          pi.id,
-          pi.quantity,
-          m.id            AS model_id,
-          m.model_name,
-          m.sizes,
-          m.nbr_of_sizes,
-          m.price         AS model_price,
-          w.global_price
-        FROM sewing.product_inventory pi
-        JOIN sewing.models     m ON m.id = pi.model_id
-        JOIN sewing.warehouses w ON w.id = pi.warehouse_id
-        ORDER BY pi.id DESC;
-      ''' );
+  // Get ready-stock inventory
+router.get('/product-inventory', (Request request) async {
+  try {
+    final results = await db.query(r'''
+      SELECT 
+        pi.id,
+        m.id               AS model_id,
+        m.name             AS model_name,
+        m.sizes,
+        m.nbr_of_sizes,
+        pi.quantity,
+        COALESCE(pb.average_cost, 0) AS global_price
+      FROM sewing.product_inventory pi
+      JOIN sewing.models m
+        ON pi.model_id = m.id
+      LEFT JOIN sewing.production_batches pb
+        ON pi.production_batch_id = pb.id
+      WHERE pi.warehouse_id = (
+        SELECT id 
+          FROM sewing.warehouses 
+         WHERE type = 'ready' 
+         LIMIT 1
+      )
+      ORDER BY m.name
+    ''');
 
-      final out = rows.map((r) => {
-        'id':            r[0] as int,
-        'quantity':      _num(r[1]),
-        'model_id':      r[2] as int,
-        'model_name':    r[3] as String,
-        'sizes':         r[4] as String?,
-        'nbr_of_sizes':  _num(r[5]),
-        'model_price':   _num(r[6]),
-        'global_price':  _num(r[7]),
-      }).toList();
+    List<Map<String, dynamic>> inventory = results.map((row) => {
+      'id'           : parseInt(row[0]),
+      'model_id'     : parseInt(row[1]),
+      'model_name'   : row[2],
+      'sizes'        : row[3],
+      'nbr_of_sizes' : parseInt(row[4]),
+      'quantity'     : parseNum(row[5]),
+      'global_price' : parseNum(row[6]),
+    }).toList();
 
-      return Response.ok(jsonEncode(out), headers: {'Content-Type': 'application/json'});
-    } catch (e) {
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Failed to fetch inventory: $e'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-  });
+    return Response.ok(
+      jsonEncode(inventory),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } catch (e) {
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to fetch product inventory: $e'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
+
+  //   // GET /design/warehouse/product-inventory
+  // router.get('/product-inventory', (Request req) async {
+  //   try {
+  //     final rows = await db.query(r'''
+  //       SELECT
+  //         pi.id,
+  //         pi.quantity,
+  //         m.id            AS model_id,
+  //         m.model_name,
+  //         m.sizes,
+  //         m.nbr_of_sizes,
+  //         m.price         AS model_price,
+  //         w.global_price
+  //       FROM sewing.product_inventory pi
+  //       JOIN sewing.models     m ON m.id = pi.model_id
+  //       JOIN sewing.warehouses w ON w.id = pi.warehouse_id
+  //       ORDER BY pi.id DESC;
+  //     ''' );
+
+  //     final out = rows.map((r) => {
+  //       'id':            r[0] as int,
+  //       'quantity':      _num(r[1]),
+  //       'model_id':      r[2] as int,
+  //       'model_name':    r[3] as String,
+  //       'sizes':         r[4] as String?,
+  //       'nbr_of_sizes':  _num(r[5]),
+  //       'model_price':   _num(r[6]),
+  //       'global_price':  _num(r[7]),
+  //     }).toList();
+
+  //     return Response.ok(jsonEncode(out), headers: {'Content-Type': 'application/json'});
+  //   } catch (e) {
+  //     return Response.internalServerError(
+  //       body: jsonEncode({'error': 'Failed to fetch inventory: $e'}),
+  //       headers: {'Content-Type': 'application/json'},
+  //     );
+  //   }
+  // });
 
 
   // Other routes (unchanged from previous version)
@@ -264,16 +318,70 @@ router.post('/recalc-global-prices', (Request req) async {
     );
   });
 
-  router.delete('/product-inventory/<id|[0-9]+>', (Request req, String id) async {
-    await db.query(
-      'DELETE FROM sewing.product_inventory WHERE id = @id',
-      substitutionValues: {'id': int.parse(id)},
-    );
+  // DELETE a finished‐goods record and return its raw materials to stock
+router.delete('/product-inventory/<invId>', (Request request, String invId) async {
+  try {
+    final id = int.parse(invId);
+    await db.transaction((ctx) async {
+      // 1) Lock & fetch the inventory row
+      final invRows = await ctx.query(r'''
+        SELECT model_id, quantity
+        FROM sewing.product_inventory
+        WHERE id = @id
+          FOR UPDATE
+      ''', substitutionValues: {'id': id});
+
+      if (invRows.isEmpty) {
+        throw StateError('not_found');
+      }
+      final modelId = invRows.first[0] as int;
+      final qty      = (invRows.first[1] as num).toDouble();
+
+      // 2) Restore each raw material used by that model
+      final comps = await ctx.query(r'''
+        SELECT material_id, quantity_needed
+        FROM sewing.model_components
+        WHERE model_id = @mid
+      ''', substitutionValues: {'mid': modelId});
+
+      for (final row in comps) {
+        final matId       = row[0] as int;
+        final neededPer   = (row[1] as num).toDouble();
+        final returnQty   = neededPer * qty;
+        await ctx.query(r'''
+          UPDATE sewing.materials
+             SET stock_quantity = stock_quantity + @returnQty
+           WHERE id = @matId
+        ''', substitutionValues: {
+          'returnQty': returnQty,
+          'matId': matId,
+        });
+      }
+
+      // 3) Delete the inventory entry
+      await ctx.query(r'''
+        DELETE FROM sewing.product_inventory
+         WHERE id = @id
+      ''', substitutionValues: {'id': id});
+    });
+
     return Response.ok(
-      jsonEncode({'status': 'deleted'}),
+      jsonEncode({'message': 'Product removed; raw materials returned to stock.'}),
       headers: {'Content-Type': 'application/json'},
     );
-  });
+  } on StateError {
+    return Response.notFound(
+      jsonEncode({'error': 'Product not found'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } catch (e) {
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to delete product and restore materials: $e'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
+
 
   router.get('/material-types', (Request req) async {
     final typesRows = await db.mappedResultsQuery(
@@ -559,15 +667,27 @@ router.post('/recalc-global-prices', (Request req) async {
   });
 
   router.delete('/materials/<id|[0-9]+>', (Request req, String id) async {
-    await db.query(
-      'DELETE FROM sewing.materials WHERE id = @id',
-      substitutionValues: {'id': int.parse(id)},
-    );
-    return Response.ok(
-      jsonEncode({'status': 'deleted'}),
+  final materialId = int.parse(id);
+  final usage = (await db.query(
+    'SELECT COUNT(*) FROM sewing.model_components WHERE material_id = @mid',
+    substitutionValues: {'mid': materialId}
+  )).first[0] as int;
+  if (usage > 0) {
+    return Response(
+      409,
+      body: jsonEncode({
+        'error': 'لا يمكن حذف المادة: لا تزال مستخدمة في ${usage} مكوّنات للنموذج'
+      }),
       headers: {'Content-Type': 'application/json'},
     );
-  });
+  }
+  await db.query(
+    'DELETE FROM sewing.materials WHERE id = @id',
+    substitutionValues: {'id': materialId},
+  );
+  return Response.ok(jsonEncode({'status': 'deleted'}));
+});
+
 
   router.get('/<id>/cost', (Request request, String id) async {
     try {

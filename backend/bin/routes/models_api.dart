@@ -505,33 +505,102 @@ router.post("/complete-production/<batchId>", (Request request, String batchId) 
   });
 
   // Delete model
-  router.delete('/<id>', (Request request, String id) async {
-    try {
-      // Delete related data first due to foreign key constraints
-      await db.query('DELETE FROM sewing.model_components WHERE model_id = @id',
-          substitutionValues: {'id': int.parse(id)});
-      
-      final results = await db.query('DELETE FROM sewing.models WHERE id = @id RETURNING id',
-          substitutionValues: {'id': int.parse(id)});
-      
-      if (results.isEmpty) {
-        return Response.notFound(
-          jsonEncode({'error': 'Model not found'}),
-          headers: {'Content-Type': 'application/json'},
+  // Delete model (and all its dependents), restoring raw materials from finished stock
+router.delete('/<id|[0-9]+>', (Request request, String id) async {
+  final mid = int.parse(id);
+
+  try {
+    await db.transaction((txn) async {
+      // 0) Compute total finished‐goods quantity in inventory
+      final invRes = await txn.query(
+        r'''
+        SELECT COALESCE(SUM(quantity), 0)::float
+          FROM sewing.product_inventory
+         WHERE model_id = @mid
+        ''',
+        substitutionValues: {'mid': mid},
+      );
+      final totalFinished = (invRes.first[0] as double);
+
+      if (totalFinished > 0) {
+        // 1) For each component of this model, add back the used raw materials
+        final compRows = await txn.query(
+          r'''
+          SELECT material_id, quantity_needed::float
+            FROM sewing.model_components
+           WHERE model_id = @mid
+          ''',
+          substitutionValues: {'mid': mid},
         );
+
+        for (final row in compRows) {
+          final matId       = row[0] as int;
+          final qtyPerModel = row[1] as double;
+          final restoreQty  = qtyPerModel * totalFinished;
+
+          await txn.query(
+            r'''
+            UPDATE sewing.materials
+               SET stock_quantity = stock_quantity + @restore
+             WHERE id = @matId
+            ''',
+            substitutionValues: {
+              'restore': restoreQty,
+              'matId'  : matId,
+            },
+          );
+        }
       }
 
-      return Response.ok(
-        jsonEncode({'message': 'Model deleted successfully'}),
-        headers: {'Content-Type': 'application/json'},
+      // 2) Delete finished‐goods stock entries
+      await txn.query(
+        'DELETE FROM sewing.product_inventory WHERE model_id = @mid',
+        substitutionValues: {'mid': mid},
       );
-    } catch (e) {
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Failed to delete model: $e'}),
-        headers: {'Content-Type': 'application/json'},
+
+      // 3) Delete any production batches of this model
+      await txn.query(
+        'DELETE FROM sewing.production_batches WHERE model_id = @mid',
+        substitutionValues: {'mid': mid},
       );
-    }
-  });
+
+      // 4) Delete historical production records
+      await txn.query(
+        'DELETE FROM sewing.model_production WHERE model_id = @mid',
+        substitutionValues: {'mid': mid},
+      );
+
+      // 5) Delete component links
+      await txn.query(
+        'DELETE FROM sewing.model_components WHERE model_id = @mid',
+        substitutionValues: {'mid': mid},
+      );
+
+      // 6) Finally, delete the model itself
+      final del = await txn.query(
+        'DELETE FROM sewing.models WHERE id = @mid RETURNING id',
+        substitutionValues: {'mid': mid},
+      );
+      if (del.isEmpty) throw StateError('not_found');
+    });
+
+    return Response.ok(
+      jsonEncode({'message': 'Model deleted; raw materials restored.'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } on StateError {
+    return Response.notFound(
+      jsonEncode({'error': 'Model not found'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } catch (e) {
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to delete model: $e'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
+
 
   // Get model cost breakdown
   // ──────────────────────────────────────────────────────────────────────────────
@@ -855,72 +924,153 @@ router.delete('/<id>/materials/<materialId>', (Request request, String id, Strin
     }
   });
     // Update a production batch (color, size, quantity)
-  router.put('/production-batch/<batchId>', (Request request, String batchId) async {
-    try {
-      final body = await request.readAsString();
-      final data = jsonDecode(body) as Map<String, dynamic>;
+  // Update a production batch (color, size, quantity) and adjust raw‐materials stock
+router.put('/production-batch/<batchId>', (Request request, String batchId) async {
+  try {
+    final body = await request.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final newColor    = data['color'] as String;
+    final newSize     = data['size'] as String;
+    final newQuantity = parseNum(data['quantity']);
 
-      // Only allow updating color, size, or quantity if status is 'in_progress'
-      final results = await db.query("""
-        UPDATE sewing.production_batches
-        SET color = @color, 
-            size = @size, 
-            quantity = @quantity
+    await db.transaction((ctx) async {
+      // 1) Lock & fetch existing batch
+      final batchRes = await ctx.query('''
+        SELECT model_id, quantity
+        FROM sewing.production_batches
         WHERE id = @batch_id AND status = 'in_progress'
-        RETURNING id
-      """, substitutionValues: {
-        'batch_id': int.parse(batchId),
-        'color': data['color'],
-        'size': data['size'],
-        'quantity': int.parse(data['quantity'].toString())
-      });
-
-      if (results.isEmpty) {
-        return Response.notFound(
-          jsonEncode({'error': 'Production batch not found or not editable'}),
-          headers: {'Content-Type': 'application/json'},
-        );
-      }
-
-      return Response.ok(
-        jsonEncode({'message': 'Production batch updated successfully'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    } catch (e) {
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Failed to update production batch: $e'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-  });
-
-  // Delete a production batch (only if still in progress)
-  router.delete('/production-batch/<batchId>', (Request request, String batchId) async {
-    try {
-      final results = await db.query('''
-        DELETE FROM sewing.production_batches
-        WHERE id = @batch_id AND status = 'in_progress'
-        RETURNING id
+        FOR UPDATE
       ''', substitutionValues: {'batch_id': int.parse(batchId)});
 
-      if (results.isEmpty) {
-        return Response.notFound(
-          jsonEncode({'error': 'Production batch not found or not deletable'}),
-          headers: {'Content-Type': 'application/json'},
-        );
+      if (batchRes.isEmpty) {
+        throw StateError('not_found');
+      }
+      final modelId  = batchRes.first[0] as int;
+      final oldQty   = parseNum(batchRes.first[1]);
+
+      // 2) Compute delta and adjust materials
+      final delta = newQuantity - oldQty;
+      if (delta != 0) {
+        // For each component
+        final comps = await ctx.query('''
+          SELECT material_id, quantity_needed
+          FROM sewing.model_components
+          WHERE model_id = @mid
+        ''', substitutionValues: {'mid': modelId});
+
+        for (final row in comps) {
+          final matId       = row[0] as int;
+          final neededPer   = parseNum(row[1]);
+          final changeQty   = neededPer * delta;
+          // If delta>0, deduct; delta<0, return
+          await ctx.query('''
+            UPDATE sewing.materials
+               SET stock_quantity = stock_quantity - @change
+             WHERE id = @matId
+          ''', substitutionValues: {
+            'change': changeQty,
+            'matId' : matId,
+          });
+        }
       }
 
-      return Response.ok(
-        jsonEncode({'message': 'Production batch deleted successfully'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    } catch (e) {
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Failed to delete production batch: $e'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-  });
+      // 3) Update the batch record
+      await ctx.query('''
+        UPDATE sewing.production_batches
+        SET color = @color, size = @size, quantity = @qty
+        WHERE id = @batch_id
+      ''', substitutionValues: {
+        'batch_id': int.parse(batchId),
+        'color'   : newColor,
+        'size'    : newSize,
+        'qty'     : newQuantity.toInt(),
+      });
+    });
+
+    return Response.ok(
+      jsonEncode({'message': 'Production batch updated; raw materials adjusted.'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } on StateError {
+    return Response.notFound(
+      jsonEncode({'error': 'Batch not found or not editable'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } catch (e) {
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to update batch: $e'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
+
+
+  // Delete a production batch (only if still in progress)
+  // Delete an in-progress batch and return all its raw materials to stock
+router.delete('/production-batch/<batchId>', (Request request, String batchId) async {
+  try {
+    await db.transaction((ctx) async {
+      final id = int.parse(batchId);
+
+      // 1) Lock & fetch the batch
+      final batchRes = await ctx.query('''
+        SELECT model_id, quantity
+        FROM sewing.production_batches
+        WHERE id = @id AND status = 'in_progress'
+        FOR UPDATE
+      ''', substitutionValues: {'id': id});
+
+      if (batchRes.isEmpty) {
+        throw StateError('not_found');
+      }
+      final modelId = batchRes.first[0] as int;
+      final qty     = parseNum(batchRes.first[1]);
+
+      // 2) For each component, return used raw materials
+      final comps = await ctx.query('''
+        SELECT material_id, quantity_needed
+        FROM sewing.model_components
+        WHERE model_id = @mid
+      ''', substitutionValues: {'mid': modelId});
+
+      for (final row in comps) {
+        final matId      = row[0] as int;
+        final neededPer  = parseNum(row[1]);
+        final returnQty  = neededPer * qty;
+        await ctx.query('''
+          UPDATE sewing.materials
+             SET stock_quantity = stock_quantity + @returnQty
+           WHERE id = @matId
+        ''', substitutionValues: {
+          'returnQty': returnQty,
+          'matId'    : matId,
+        });
+      }
+
+      // 3) Delete the batch
+      await ctx.query('''
+        DELETE FROM sewing.production_batches
+        WHERE id = @id
+      ''', substitutionValues: {'id': id});
+    });
+
+    return Response.ok(
+      jsonEncode({'message': 'Batch deleted; raw materials restored.'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } on StateError {
+    return Response.notFound(
+      jsonEncode({'error': 'Batch not found or not deletable'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } catch (e) {
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to delete batch: $e'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
+
 router.get('/by_season/<seasonId|[0-9]+>', (Request req, String seasonId) async {
   final sid = int.parse(seasonId);
   

@@ -75,7 +75,7 @@ String get baseUrl => '${globalServerUri.toString()}';
   }
 
   Future<void> _fetchFactures() async {
-    final response = await http.get(Uri.parse('http://localhost:8888/embrodry/sales/factures'));
+    final response = await http.get(Uri.parse('${baseUrl}/embrodry/sales/factures'));
     if (response.statusCode == 200) {
       setState(() {
         allFactures = jsonDecode(response.body) as List;
