@@ -163,94 +163,72 @@ Router getSeasonRoutes(PostgreSQLConnection db) {
     }
   });
 
-  router.get('/<id>/profit', (Request request, String id) async {
+   router.get('/<id>/profit', (Request request, String id) async {
     try {
-      final seasonResult = await db.query("""
+      final sid = _int(id);
+      // fetch season dates
+      final seasonRes = await db.query(r'''
         SELECT start_date, end_date
         FROM sewing.seasons
         WHERE id = @id
-      """, substitutionValues: {'id': parseInt(id)});
-
-      if (seasonResult.isEmpty) {
-        return Response.notFound(jsonEncode({'error': 'Season not found'}),
-            headers: {'Content-Type': 'application/json'});
+      ''', substitutionValues: {'id': sid});
+      if (seasonRes.isEmpty) {
+        return Response.notFound(
+          jsonEncode({'error': 'Season not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
       }
+      final startDate = seasonRes.first[0] as DateTime;
+      final endDate   = seasonRes.first[1] as DateTime;
 
-      final startDate = seasonResult.first[0] as DateTime;
-      final endDate   = seasonResult.first[1] as DateTime;
-
-      // ========= الربح من المبيعات =========
-      final profitResults = await db.query("""
+      // compute revenue & COGS based on global_price only
+      final profitRes = await db.query(r'''
         SELECT
-            SUM(fi.quantity * fi.unit_price) AS total_revenue,
-            SUM(fi.quantity * (
-                COALESCE(m.cut_price, 0) +
-                COALESCE(m.sewing_price, 0) +
-                COALESCE(m.press_price, 0) +
-                COALESCE(m.assembly_price, 0) +
-                COALESCE(m.electricity, 0) +
-                COALESCE(m.rent, 0) +
-                COALESCE(m.maintenance, 0) +
-                COALESCE(m.water, 0) +
-                COALESCE(m.washing, 0) +
-                COALESCE(m.embroidery, 0) +
-                COALESCE(m.laser, 0) +
-                COALESCE(m.printing, 0) +
-                COALESCE(m.crochet, 0) +
-                COALESCE(material_costs.total_material_cost_per_unit, 0)
-            )) AS total_cost_of_goods_sold
+          COALESCE(SUM(fi.quantity * fi.unit_price), 0)           AS total_revenue,
+          COALESCE(SUM(fi.quantity * COALESCE(m.global_price,0)),0) AS total_cost_of_goods_sold
         FROM sewing.facture_items fi
-        JOIN sewing.factures f ON fi.facture_id = f.id
-        JOIN sewing.models m ON fi.model_id = m.id
-        LEFT JOIN (
-            SELECT
-                mc.model_id,
-                SUM(mc.quantity_needed * COALESCE(avg_prices.avg_price, 0)) AS total_material_cost_per_unit
-            FROM sewing.model_components mc
-            LEFT JOIN (
-                SELECT material_id, AVG(unit_price) AS avg_price
-                FROM sewing.purchase_items
-                GROUP BY material_id
-            ) avg_prices ON mc.material_id = avg_prices.material_id
-            GROUP BY mc.model_id
-        ) AS material_costs ON m.id = material_costs.model_id
-        WHERE f.facture_date >= @start_date AND f.facture_date <= @end_date
-      """, substitutionValues: {
+        JOIN sewing.factures f   ON fi.facture_id = f.id
+        JOIN sewing.models   m   ON fi.model_id     = m.id
+        WHERE f.facture_date >= @start_date
+          AND f.facture_date <= @end_date;
+      ''', substitutionValues: {
         'start_date': startDate,
-        'end_date'  : endDate,
+        'end_date':   endDate,
       });
 
-      final totalRevenue            = parseNum(profitResults.first[0]);
-      final totalCostOfGoodsSold    = parseNum(profitResults.first[1]);
-      final totalProfitBeforeOthers = totalRevenue - totalCostOfGoodsSold;
+      final totalRevenue         = _num(profitRes.first[0]);
+      final totalCostOfGoodsSold = _num(profitRes.first[1]);
+      final profitBeforeOthers   = totalRevenue - totalCostOfGoodsSold;
 
-      // ========= مصاريف أخرى =========
-      final otherExpRes = await db.query("""
-        SELECT COALESCE(SUM(amount), 0)
+      // other expenses
+      final otherRes = await db.query(r'''
+        SELECT COALESCE(SUM(amount),0)
         FROM sewing.expenses
         WHERE expense_date >= @start_date
           AND expense_date <= @end_date
           AND expense_type = @type_other
-      """, substitutionValues: {
+      ''', substitutionValues: {
         'start_date': startDate,
-        'end_date'  : endDate,
-        'type_other': 'custom' // أو 'custom' لو هذا هو الاسم عندك
+        'end_date':   endDate,
+        'type_other': 'custom'
       });
+      final otherExpenses = _num(otherRes.first[0]);
+      final netProfit     = profitBeforeOthers - otherExpenses;
 
-      final otherExpenses = parseNum(otherExpRes.first[0]);
-      final netProfit     = totalProfitBeforeOthers - otherExpenses;
-
-      return Response.ok(jsonEncode({
-        'total_revenue'             : totalRevenue,
-        'total_cost_of_goods_sold'  : totalCostOfGoodsSold,
-        'total_profit'              : totalProfitBeforeOthers,
-        'other_expenses'            : otherExpenses,
-        'net_profit'                : netProfit,
-      }), headers: {'Content-Type': 'application/json'});
+      return Response.ok(
+        jsonEncode({
+          'total_revenue':             totalRevenue,
+          'total_cost_of_goods_sold':  totalCostOfGoodsSold,
+          'total_profit':              profitBeforeOthers,
+          'other_expenses':            otherExpenses,
+          'net_profit':                netProfit,
+        }),
+        headers: {'Content-Type': 'application/json'},
+      );
     } catch (e) {
       return Response.internalServerError(
         body: jsonEncode({'error': 'Failed to calculate season profit: $e'}),
-        headers: {'Content-Type': 'application/json'}
+        headers: {'Content-Type': 'application/json'},
       );
     }
   });

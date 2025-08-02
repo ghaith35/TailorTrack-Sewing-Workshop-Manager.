@@ -178,106 +178,44 @@ router.post('/recalc-global-prices', (Request req) async {
 });
 
   // Updated /product-inventory endpoint
+    // GET /design/warehouse/product-inventory
   router.get('/product-inventory', (Request req) async {
-  try {
-    // Fetch all inventory records, along with related model and production batch data
-    final rows = await db.mappedResultsQuery('''
-      SELECT 
-        pi.id,
-        pi.model_id,
-        pi.quantity,
-        m.name,
-        m.sizes,
-        m.nbr_of_sizes,
-        COALESCE(SUM(pb.manual_quantity), 0) as manual_quantity,
-        COALESCE(SUM(pb.automatic_quantity), 0) as automatic_quantity
-      FROM sewing.product_inventory pi
-      LEFT JOIN sewing.models m ON pi.model_id = m.id
-      LEFT JOIN sewing.production_batches pb ON pi.model_id = pb.model_id
-        AND (pb.status = 'completed' OR pb.status IS NULL)
-      GROUP BY pi.id, pi.model_id, pi.quantity, m.name, m.sizes, m.nbr_of_sizes
-      ORDER BY pi.model_id;
-    ''');
+    try {
+      final rows = await db.query(r'''
+        SELECT
+          pi.id,
+          pi.quantity,
+          m.id            AS model_id,
+          m.model_name,
+          m.sizes,
+          m.nbr_of_sizes,
+          m.price         AS model_price,
+          w.global_price
+        FROM sewing.product_inventory pi
+        JOIN sewing.models     m ON m.id = pi.model_id
+        JOIN sewing.warehouses w ON w.id = pi.warehouse_id
+        ORDER BY pi.id DESC;
+      ''' );
 
-    // Map to merge inventory per model_id
-    final Map<int, Map<String, dynamic>> modelMap = {};
+      final out = rows.map((r) => {
+        'id':            r[0] as int,
+        'quantity':      _num(r[1]),
+        'model_id':      r[2] as int,
+        'model_name':    r[3] as String,
+        'sizes':         r[4] as String?,
+        'nbr_of_sizes':  _num(r[5]),
+        'model_price':   _num(r[6]),
+        'global_price':  _num(r[7]),
+      }).toList();
 
-    for (final r in rows) {
-      final pi = r['product_inventory']!;
-      final model = r['models']!;
-      final int modelId = pi['model_id'] as int;
-      final double manualQuantity = parseNum(r['']?['manual_quantity'] ?? 0).toDouble();
-      final double automaticQuantity = parseNum(r['']?['automatic_quantity'] ?? 0).toDouble();
-
-      // If this model is not in the map yet, initialize it
-      if (!modelMap.containsKey(modelId)) {
-        // Calculate costs for this model (run once per model)
-        final costs = await calculateModelCosts(db, modelId);
-
-        // Global price needs to be recalculated after we finish summing all quantities!
-        modelMap[modelId] = {
-          'id': pi['id'],
-          'model_id': modelId,
-          'model_name': model['name'],
-          'sizes': model['sizes'],
-          'nbr_of_sizes': model['nbr_of_sizes'],
-          'quantity': 0.0, // sum here
-          'manual_quantity': 0.0,
-          'automatic_quantity': 0.0,
-          'costs': costs, // keep for now to avoid re-calling
-        };
-      }
-
-      // Sum quantities for this model
-      modelMap[modelId]!['quantity'] += (pi['quantity'] as num).toDouble();
-      modelMap[modelId]!['manual_quantity'] += manualQuantity;
-      modelMap[modelId]!['automatic_quantity'] += automaticQuantity;
+      return Response.ok(jsonEncode(out), headers: {'Content-Type': 'application/json'});
+    } catch (e) {
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Failed to fetch inventory: $e'}),
+        headers: {'Content-Type': 'application/json'},
+      );
     }
-
-    // Now build the final list, calculate global price correctly
-    final List<Map<String, dynamic>> finalList = [];
-
-    for (final modelData in modelMap.values) {
-      final double manualQuantity = modelData['manual_quantity'];
-      final double automaticQuantity = modelData['automatic_quantity'];
-      final double totalQuantity = manualQuantity + automaticQuantity;
-      final costs = modelData['costs'];
-      double globalPrice = 0.0;
-
-      if (totalQuantity > 0) {
-        globalPrice = (
-          manualQuantity * (costs['manual_total_cost'] ?? 0.0) +
-          automaticQuantity * (costs['automatic_total_cost'] ?? 0.0)
-        ) / totalQuantity;
-      }
-
-      finalList.add({
-  'id':        modelData['id'],        // ← inventory row id
-  'model_id':  modelData['model_id'],
-  'model_name':modelData['model_name'],
-  'sizes':     modelData['sizes'],
-  'nbr_of_sizes': modelData['nbr_of_sizes'],
-  'quantity':  modelData['quantity'],
-  'global_price': globalPrice,
-});
-
-    }
-
-    // Debug: Print the response
-    // print('API Response: $finalList');
-
-    return Response.ok(
-      jsonEncode(finalList),
-      headers: {'Content-Type': 'application/json'},
-    );
-  } catch (e) {
-    print('Error in /product-inventory: $e');
-    return Response.internalServerError(
-      body: jsonEncode({'error': 'Failed to fetch product inventory: $e'}),
-      headers: {'Content-Type': 'application/json'},
-    );
-  }
-});
+  });
 
 
   // Other routes (unchanged from previous version)
