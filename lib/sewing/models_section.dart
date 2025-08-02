@@ -277,14 +277,14 @@ Future<void> _deleteProductionBatch(Map<String, dynamic> batch) async {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(
-              controller: colorCtrl,
-              decoration: const InputDecoration(labelText: 'اللون'),
-            ),
-            TextField(
-              controller: sizeCtrl,
-              decoration: const InputDecoration(labelText: 'المقاس'),
-            ),
+            // TextField(
+            //   controller: colorCtrl,
+            //   decoration: const InputDecoration(labelText: 'اللون'),
+            // ),
+            // TextField(
+            //   controller: sizeCtrl,
+            //   decoration: const InputDecoration(labelText: 'المقاس'),
+            // ),
             TextField(
               controller: quantityCtrl,
               decoration: const InputDecoration(labelText: 'الكمية'),
