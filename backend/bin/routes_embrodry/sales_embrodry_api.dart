@@ -385,17 +385,91 @@ Router getEmbroiderySalesRoutes(PostgreSQLConnection db) {
   });
 
   // ======================== DELETE FACTURE ========================
-  router.delete('/factures/<fid|[0-9]+>', (Request req, String fid) async {
-    try {
-      final factureId = int.parse(fid);
-      await db.query('DELETE FROM embroidery.factures WHERE id=@id',
-          substitutionValues: {'id': factureId});
+// ======================== DELETE FACTURE (with inventory restore) ========================
+router.delete('/factures/<fid|[0-9]+>', (Request req, String fid) async {
+  try {
+    final factureId = int.parse(fid);
+
+    return await db.transaction((txn) async {
+      // 1) Fetch all items on this facture
+      final itemRows = await txn.query(
+        '''
+        SELECT model_id, quantity
+        FROM embroidery.facture_items
+        WHERE facture_id = @fid
+        ''',
+        substitutionValues: {'fid': factureId},
+      );
+
+      // 2) Look up the "ready" warehouse ID
+      final whRow = await txn.query(
+        '''
+        SELECT id FROM embroidery.warehouses
+        WHERE type = 'ready'
+        LIMIT 1
+        '''
+      );
+      final readyWid = whRow.first[0] as int;
+
+      // 3) For each item, add its quantity back into product_inventory
+      for (final row in itemRows) {
+        final mid = _parseInt(row[0]);
+        final qty = _parseNum(row[1]);
+
+        // Try to update an existing inventory record
+        final updateResult = await txn.query(
+          '''
+          UPDATE embroidery.product_inventory
+          SET quantity = quantity + @qty,
+              last_updated = NOW()
+          WHERE model_id = @mid
+            AND warehouse_id = @wid
+          ''',
+          substitutionValues: {
+            'qty': qty,
+            'mid': mid,
+            'wid': readyWid,
+          },
+        );
+
+        // If no row was updated, insert a new one
+        if (updateResult.affectedRowCount == 0) {
+          await txn.query(
+            '''
+            INSERT INTO embroidery.product_inventory
+              (warehouse_id, model_id, quantity)
+            VALUES
+              (@wid, @mid, @qty)
+            ''',
+            substitutionValues: {
+              'wid': readyWid,
+              'mid': mid,
+              'qty': qty,
+            },
+          );
+        }
+      }
+
+      // 4) Delete the facture (assumes cascade delete on items/payments)
+      await txn.query(
+        '''
+        DELETE FROM embroidery.factures
+        WHERE id = @fid
+        ''',
+        substitutionValues: {'fid': factureId},
+      );
+
       return _okJson({'deleted': factureId});
-    } catch (e, st) {
-      print('DELETE ERROR: $e\n$st');
-      return _errJson({'error': 'Delete failed', 'details': e.toString()});
-    }
-  });
+    });
+  } catch (e, st) {
+    print('DELETE FACTURE ERROR: $e\n$st');
+    return _errJson(
+      {'error': 'Delete failed', 'details': e.toString()},
+      code: 500,
+    );
+  }
+});
+
 
   // ======================== CLIENT FACTURES ========================
   router.get('/clients/<cid|[0-9]+>/factures', (Request req, String cid) async {
@@ -647,6 +721,75 @@ Router getEmbroiderySalesRoutes(PostgreSQLConnection db) {
     } catch (e, st) {
       print('CLIENTS BY SEASON ERROR: $e\n$st');
       return _errJson({'error': 'Failed to fetch', 'details': e.toString()});
+    }
+  });
+  // ======================== SEARCH MODELS ========================
+  router.get('/models/search', (Request req) async {
+    final q = (req.url.queryParameters['q'] ?? '').toLowerCase();
+    final sid = req.url.queryParameters['season_id'];
+    final sql = StringBuffer('''
+      SELECT
+        m.id,
+        m.model_name,
+        m.stitch_price,
+        COALESCE(SUM(pi.quantity),0) AS available_quantity,
+        m.stitch_number,
+        m.model_type
+      FROM embroidery.models m
+      LEFT JOIN embroidery.product_inventory pi
+        ON pi.model_id = m.id
+        AND pi.warehouse_id = (
+          SELECT id FROM embroidery.warehouses WHERE type='ready' LIMIT 1
+        )
+    ''');
+    final subs = <String, dynamic>{};
+    if (sid != null) {
+      sql.write(' JOIN embroidery.seasons s ON m.model_date BETWEEN s.start_date AND s.end_date');
+      sql.write(' WHERE s.id = @sid AND LOWER(m.model_name) LIKE @q');
+      subs['sid'] = int.parse(sid);
+      subs['q'] = '%$q%';
+    } else {
+      sql.write(' WHERE LOWER(m.model_name) LIKE @q');
+      subs['q'] = '%$q%';
+    }
+    sql.write(' GROUP BY m.id ORDER BY m.model_name');
+    try {
+      final rows = await db.query(sql.toString(), substitutionValues: subs);
+      final out = rows.map((r) => {
+        'id': _parseInt(r[0]),
+        'model_name': r[1],
+        'stitch_price': _parseNum(r[2]),
+        'available_quantity': _parseInt(r[3]),
+        'stitch_number': _parseInt(r[4]),
+        'model_type': r[5],
+      }).toList();
+      return _okJson(out);
+    } catch (e, st) {
+      print('MODEL SEARCH ERROR: $e\n$st');
+      return _errJson({'error': 'Model search failed', 'details': e.toString()});
+    }
+  });
+
+  // ======================== SEARCH CLIENTS ========================
+  router.get('/clients/search', (Request req) async {
+    final q = (req.url.queryParameters['q'] ?? '').toLowerCase();
+    try {
+      final rows = await db.query('''
+        SELECT id, full_name, phone, address
+        FROM embroidery.clients
+        WHERE LOWER(full_name) LIKE @q
+        ORDER BY full_name
+      ''', substitutionValues: {'q': '%$q%'});
+      final out = rows.map((r) => {
+        'id': _parseInt(r[0]),
+        'full_name': r[1],
+        'phone': r[2],
+        'address': r[3],
+      }).toList();
+      return _okJson(out);
+    } catch (e, st) {
+      print('CLIENT SEARCH ERROR: $e\n$st');
+      return _errJson({'error': 'Client search failed', 'details': e.toString()});
     }
   });
 

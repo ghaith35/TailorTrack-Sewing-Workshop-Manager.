@@ -5,6 +5,9 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../main.dart';
+import 'package:flutter/services.dart'; // for rootBundle
+import 'package:file_picker/file_picker.dart'; // for directory chooser
+import 'dart:io' as io;
 
 class SewingEmployeesSection extends StatefulWidget {
   const SewingEmployeesSection({super.key});
@@ -16,6 +19,7 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
   int selectedTab = 0;
   int selectedInfoTab = 0;
   int attType = 0;
+late pw.Font _arabicFont;
 
   // Attendance year/month selection
   List<int> _availableYears = [];
@@ -118,7 +122,7 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
   @override
   void initState() {
     super.initState();
-    
+    _loadPdfFont();
     _infoSearchController.addListener(_filterEmployees);
     _loansSearchController.addListener(_filterLoans);
     _piecesSearchController.addListener(_filterPieces);
@@ -127,6 +131,10 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
     
     _initializeData();
   }
+Future<void> _loadPdfFont() async {
+  final fontData = await rootBundle.load('assets/fonts/NotoSansArabic_Condensed-Black.ttf');
+  _arabicFont = pw.Font.ttf(fontData);
+}
 
   Future<void> _initializeData() async {
     await fetchEmployees();
@@ -563,55 +571,93 @@ if (loanRes.statusCode == 200) {
   return rows;
 }
   Future<void> _exportSalaryTableAsPdf({required bool isMonthly}) async {
-  final pdf = pw.Document();
-  final monthLabel = _monthLabel(selectedSalaryMonth!);
-  final tableTitle = isMonthly ? 'رواتب العمال (شهرياً) - $monthLabel' : 'رواتب العمال (قطعة) - $monthLabel';
-  final tableData = isMonthly ? monthlyTableRows : pieceTableRows;
+    final pdf = pw.Document();
+    final monthLabel = _monthLabel(selectedSalaryMonth!);
+    final tableTitle = isMonthly
+        ? 'رواتب العمال (شهرياً) - $monthLabel'
+        : 'رواتب العمال (قطعة) - $monthLabel';
+    final rawHeaders = isMonthly
+        ? ['الاسم الكامل', 'الراتب', 'مجموع الساعات', 'الراتب الفعلي', 'السلف', 'الديون', 'الراتب النهائي']
+        : ['الاسم الكامل', 'مجموع القطع', 'مجموع الأجر', 'السلف', 'الديون', 'الراتب النهائي'];
+    final rawDataRows = (isMonthly ? monthlyTableRows : pieceTableRows).map<List<String>>((row) {
+      return isMonthly
+          ? [
+              row['full_name'],
+              row['salary'].toStringAsFixed(2),
+              row['total_hours'].toStringAsFixed(2),
+              row['calculated_salary'].toStringAsFixed(2),
+              row['monthly_due'].toStringAsFixed(2),
+              row['debt'].toStringAsFixed(2),
+              row['final_salary'].toStringAsFixed(2),
+            ]
+          : [
+              row['full_name'],
+              row['total_qty'].toString(),
+              row['total_salary'].toStringAsFixed(2),
+              row['monthly_due'].toStringAsFixed(2),
+              row['debt'].toStringAsFixed(2),
+              row['final_salary'].toStringAsFixed(2),
+            ];
+    }).toList();
 
-  pdf.addPage(
-    pw.MultiPage(
-      pageFormat: PdfPageFormat.a4.landscape,
-      build: (context) => [
-        pw.Header(
-          level: 0,
-          child: pw.Text(tableTitle, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 20)),
-        ),
-        pw.Table.fromTextArray(
-          headers: isMonthly
-              ? ['الاسم الكامل', 'الراتب', 'مجموع الساعات', 'الراتب الفعلي', 'السلف', 'الديون', 'الراتب النهائي']
-              : ['الاسم الكامل', 'مجموع القطع', 'مجموع الأجر', 'السلف', 'الديون', 'الراتب النهائي'],
-          data: tableData.map((row) {
-            return isMonthly
-                ? [
-                    row['full_name'],
-                    row['salary'].toStringAsFixed(2),
-                    row['total_hours'].toStringAsFixed(2),
-                    row['calculated_salary'].toStringAsFixed(2),
-                    row['debt'].toStringAsFixed(2),
-                    row['loan'].toStringAsFixed(2),
-                    row['final_salary'].toStringAsFixed(2),
-                  ]
-                : [
-                    row['full_name'],
-                    row['total_qty'].toString(),
-                    row['total_salary'].toStringAsFixed(2),
-                    row['debt'].toStringAsFixed(2),
-                    row['loan'].toStringAsFixed(2),
-                    row['final_salary'].toStringAsFixed(2),
-                  ];
-          }).toList(),
-          headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14),
-          cellStyle: pw.TextStyle(fontSize: 12),
-          cellAlignment: pw.Alignment.center,
-          headerDecoration: pw.BoxDecoration(color: PdfColors.grey300),
-          border: pw.TableBorder.all(width: 0.5),
-        ),
-      ],
-    ),
-  );
+    // Reverse headers and data rows for RTL layout
+    final headers = rawHeaders.reversed.toList();
+    final dataRows = rawDataRows.map((r) => r.reversed.toList()).toList();
 
-  await Printing.layoutPdf(onLayout: (format) async => pdf.save());
-}
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4.landscape,
+        build: (context) => [
+          pw.Directionality(
+            textDirection: pw.TextDirection.rtl,
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Header(
+                  level: 0,
+                  child: pw.Text(
+                    tableTitle,
+                    style: pw.TextStyle(
+                      font: _arabicFont,
+                      fontSize: 20,
+                      fontWeight: pw.FontWeight.bold,
+                    ),
+                  ),
+                ),
+                pw.Table.fromTextArray(
+                  headers: headers,
+                  data: dataRows,
+                  headerStyle: pw.TextStyle(
+                    font: _arabicFont,
+                    fontWeight: pw.FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                  cellStyle: pw.TextStyle(
+                    font: _arabicFont,
+                    fontSize: 12,
+                  ),
+                  cellAlignment: pw.Alignment.centerRight,
+                  headerDecoration: pw.BoxDecoration(color: PdfColors.grey300),
+                  border: pw.TableBorder.all(width: 0.5),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final bytes = await pdf.save();
+    
+      final String? outputDir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'اختر مجلد الحفظ');
+      if (outputDir != null) {
+        final filePath = '$outputDir/رواتب_$monthLabel.pdf';
+        final file = io.File(filePath);
+        await file.writeAsBytes(bytes);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم حفظ الملف في $filePath')));
+      }
+    
+  }
 
   Future<void> fetchEmployees() async {
     setState(() => isLoading = true);

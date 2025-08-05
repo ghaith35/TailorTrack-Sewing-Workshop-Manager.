@@ -12,6 +12,10 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../main.dart';
+import 'package:flutter/services.dart';
+import 'package:pdf/pdf.dart';
+import 'dart:io' as io;
+import 'package:file_picker/file_picker.dart';
 
 /// ===================== CONFIG =====================
 String get kBaseUrl => '${globalServerUri.toString()}/design/sales';

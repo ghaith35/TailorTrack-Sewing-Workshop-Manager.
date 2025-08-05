@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:postgres/postgres.dart';
+num _parseNum(dynamic v) => v is num ? v : (num.tryParse(v?.toString() ?? '') ?? 0);
+double _parseDouble(dynamic v) => _parseNum(v).toDouble();
+
 
 Router getPurchasesRoutes(PostgreSQLConnection db) {
   final router = Router();
@@ -270,103 +273,274 @@ Router getPurchasesRoutes(PostgreSQLConnection db) {
   });
 
   // ─── Replace line‐items on a purchase ─────────────────────────────────
-  router.post('/<purchaseId|[0-9]+>/items', (Request req, String purchaseId) async {
-    final data     = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-    final items    = data['items'] as List? ?? [];
-    final pid      = int.parse(purchaseId);
+  // ─── Delete a purchase ────────────────────────────────────────────────
+router.delete('/<id|[0-9]+>', (Request req, String id) async {
+    final pid = int.parse(id);
 
-    // Roll back old quantities
-    final old = await db.mappedResultsQuery(
+    return await db.transaction((ctx) async {
+      // 1) Load all items
+      final oldRows = await ctx.mappedResultsQuery(
+        'SELECT material_id, quantity FROM sewing.purchase_items WHERE purchase_id=@pid',
+        substitutionValues: {'pid': pid},
+      );
+
+      // 2) Ensure each material has enough stock to roll back
+      for (final r in oldRows) {
+        final mid = r['purchase_items']!['material_id'] as int;
+        final need = _parseDouble(r['purchase_items']!['quantity']);
+        final stockRes = await ctx.query(
+          'SELECT stock_quantity FROM sewing.materials WHERE id=@mid',
+          substitutionValues: {'mid': mid},
+        );
+        final have = _parseDouble(stockRes.first[0]);
+        if (have < need) {
+          return Response(
+            400,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'error': 'لا يمكن حذف الشراء: المادة $mid مخزونها الحالي $have، لكن يلزم $need.'
+            }),
+          );
+        }
+      }
+
+      // 3) Deduct stock
+      for (final r in oldRows) {
+        final mid = r['purchase_items']!['material_id'] as int;
+        final q   = _parseDouble(r['purchase_items']!['quantity']);
+        await ctx.query(
+          'UPDATE sewing.materials SET stock_quantity = stock_quantity - @q WHERE id=@mid',
+          substitutionValues: {'q': q, 'mid': mid},
+        );
+      }
+
+      // 4) Remove all payments for this purchase
+      await ctx.query(
+        'DELETE FROM sewing.purchase_payments WHERE purchase_id=@pid',
+        substitutionValues: {'pid': pid},
+      );
+
+      // 5) Delete the purchase (cascade deletes its items)
+      await ctx.query(
+        'DELETE FROM sewing.purchases WHERE id=@pid',
+        substitutionValues: {'pid': pid},
+      );
+
+      return Response.ok(
+        jsonEncode({'status': 'deleted'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    });
+  });
+
+
+// ─── Replace line‐items AND initial payment on a purchase ─────────────
+router.post('/<purchaseId|[0-9]+>/items', (Request req, String purchaseId) async {
+  final data  = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+  final items = data['items'] as List? ?? [];
+  final pid   = int.parse(purchaseId);
+  // allow optionally changing the on-creation payment here:
+  final newPaid0 = double.tryParse(
+    data['amount_paid_on_creation']?.toString() ?? ''
+  );
+
+  return await db.transaction((ctx) async {
+    // 1) rollback old quantities
+    final old = await ctx.mappedResultsQuery(
       'SELECT material_id, quantity FROM sewing.purchase_items WHERE purchase_id=@pid',
-      substitutionValues: {'pid': pid});
+      substitutionValues: {'pid': pid}
+    );
     for (final oi in old) {
-      await db.query(
-        'UPDATE sewing.materials SET stock_quantity = stock_quantity - @q WHERE id=@mid',
+      await ctx.query(
+        'UPDATE sewing.materials '
+        'SET stock_quantity = stock_quantity - @q '
+        'WHERE id = @mid',
         substitutionValues: {
-          'q':  oi['purchase_items']!['quantity'],
-          'mid': oi['purchase_items']!['material_id']
-        });
+          'q': (oi['purchase_items']!['quantity'] as num).toDouble(),
+          'mid': oi['purchase_items']!['material_id'] as int
+        }
+      );
     }
 
-    // Delete old items
-    await db.query(
+    // 2) delete old items
+    await ctx.query(
       'DELETE FROM sewing.purchase_items WHERE purchase_id=@pid',
-      substitutionValues: {'pid': pid});
+      substitutionValues: {'pid': pid}
+    );
 
-    // Insert new items
+    // 3) insert new items & update stock
     for (final it in items) {
       final q   = double.tryParse(it['quantity'].toString())   ?? 0.0;
       final up  = double.tryParse(it['unit_price'].toString()) ?? 0.0;
       final mid = it['material_id'] as int;
-      await db.query(
-        'INSERT INTO sewing.purchase_items (purchase_id, material_id, quantity, unit_price) '
+      await ctx.query(
+        'INSERT INTO sewing.purchase_items '
+        '(purchase_id, material_id, quantity, unit_price) '
         'VALUES (@pid, @mid, @qty, @price)',
         substitutionValues: {
           'pid':   pid,
           'mid':   mid,
           'qty':   q,
-          'price': up,
-        });
-      await db.query(
-        'UPDATE sewing.materials SET stock_quantity = stock_quantity + @q WHERE id=@mid',
-        substitutionValues: {'q': q, 'mid': mid});
+          'price': up
+        }
+      );
+      await ctx.query(
+        'UPDATE sewing.materials '
+        'SET stock_quantity = stock_quantity + @q '
+        'WHERE id = @mid',
+        substitutionValues: {'q': q, 'mid': mid}
+      );
     }
 
-    return Response.ok(jsonEncode({'status': 'updated'}),
-        headers: {'Content-Type': 'application/json'});
+    // 4) update the on-creation payment if provided
+    if (newPaid0 != null) {
+      await ctx.query(
+        'UPDATE sewing.purchases '
+        'SET amount_paid_on_creation = @paid '
+        'WHERE id = @pid',
+        substitutionValues: {'paid': newPaid0, 'pid': pid}
+      );
+    }
+
+    return Response.ok(
+      jsonEncode({'status': 'updated'}),
+      headers: {'Content-Type': 'application/json'}
+    );
   });
+});
 
   // ─── Edit a purchase ──────────────────────────────────────────────────
-  router.put('/<id|[0-9]+>', (Request req, String id) async {
-    final data      = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-    final supplier  = data['supplier_id'] as int?;
-    final paid0     = double.tryParse(data['amount_paid_on_creation']?.toString() ?? '0') ?? 0.0;
-    final driver     = data['driver'] as String? ?? 'غير محدد'; // Get the driver
+  // ─── Modify a purchase ────────────────────────────────────────────────
+router.put('/<id|[0-9]+>', (Request req, String id) async {
+    final pid      = int.parse(id);
+    final data     = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+    final items    = (data['items'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final newPaid0 = data.containsKey('amount_paid_on_creation')
+        ? _parseDouble(data['amount_paid_on_creation'])
+        : null;
+    final supplier = data['supplier_id'] as int?;
+    final driver   = data['driver'] as String? ?? 'غير محدد';
+    final date     = data['purchase_date'];
 
-    await db.query(r'''
-      UPDATE sewing.purchases
-         SET purchase_date = @date,
-             supplier_id   = @supplier,
-             amount_paid_on_creation = @paid,
-             driver = @driver // Update the driver
-       WHERE id = @id
-    ''', substitutionValues: {
-      'id'      : int.parse(id),
-      'date'    : data['purchase_date'],
-      'supplier': supplier,
-      'paid'    : paid0,
-      'driver':  driver, // Include driver in the query
+    return await db.transaction((ctx) async {
+      // 1) Fetch old items
+      final oldRows = await ctx.mappedResultsQuery(
+        'SELECT material_id, quantity FROM sewing.purchase_items WHERE purchase_id=@pid',
+        substitutionValues: {'pid': pid},
+      );
+
+      // 2) Check raw-warehouse stock for each old item
+      for (final r in oldRows) {
+        final mid = r['purchase_items']!['material_id'] as int;
+        final need = _parseDouble(r['purchase_items']!['quantity']);
+        final stockRes = await ctx.query(
+          'SELECT stock_quantity FROM sewing.materials WHERE id=@mid',
+          substitutionValues: {'mid': mid},
+        );
+        final have = _parseDouble(stockRes.first[0]);
+        if (have < need) {
+          return Response(
+            400,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'error': 'لا يمكن تعديل الشراء: المادة $mid مخزونها الحالي $have، لكن يلزم $need.'
+            }),
+          );
+        }
+      }
+
+      // 3) Roll back old stock
+      for (final r in oldRows) {
+        final mid = r['purchase_items']!['material_id'] as int;
+        final q   = _parseDouble(r['purchase_items']!['quantity']);
+        await ctx.query(
+          'UPDATE sewing.materials SET stock_quantity = stock_quantity - @q WHERE id=@mid',
+          substitutionValues: {'q': q, 'mid': mid},
+        );
+      }
+
+      // 4) Delete old items
+      await ctx.query(
+        'DELETE FROM sewing.purchase_items WHERE purchase_id=@pid',
+        substitutionValues: {'pid': pid},
+      );
+
+      // 5) Insert new items & bump stock
+      for (final it in items) {
+        final mid = it['material_id'] as int;
+        final q   = _parseDouble(it['quantity']);
+        final up  = _parseDouble(it['unit_price']);
+        await ctx.query(
+          'INSERT INTO sewing.purchase_items '
+          '(purchase_id, material_id, quantity, unit_price) '
+          'VALUES (@pid, @mid, @qty, @price)',
+          substitutionValues: {
+            'pid':   pid,
+            'mid':   mid,
+            'qty':   q,
+            'price': up,
+          },
+        );
+        await ctx.query(
+          'UPDATE sewing.materials SET stock_quantity = stock_quantity + @q WHERE id=@mid',
+          substitutionValues: {'q': q, 'mid': mid},
+        );
+      }
+
+      // 6) Update purchase header (date, supplier, driver, and optional payment)
+      final cols = [
+        'purchase_date = @date',
+        'supplier_id   = @supplier',
+        'driver        = @driver'
+      ];
+      final vals = {
+        'id':       pid,
+        'date':     date,
+        'supplier': supplier,
+        'driver':   driver,
+      };
+      if (newPaid0 != null) {
+        cols.add('amount_paid_on_creation = @paid');
+        vals['paid'] = newPaid0;
+      }
+
+      await ctx.query(
+        'UPDATE sewing.purchases SET ${cols.join(', ')} WHERE id = @id',
+        substitutionValues: vals,
+      );
+
+      return Response.ok(
+        jsonEncode({'status': 'updated'}),
+        headers: {'Content-Type': 'application/json'},
+      );
     });
-
-    return Response.ok(jsonEncode({'status': 'updated'}),
-        headers: {'Content-Type': 'application/json'});
   });
 
   // ─── Delete a purchase ────────────────────────────────────────────────
-  router.delete('/<id|[0-9]+>', (Request req, String id) async {
-    final pid = int.parse(id);
+  // router.delete('/<id|[0-9]+>', (Request req, String id) async {
+  //   final pid = int.parse(id);
 
-    // Roll back quantities
-    final old = await db.mappedResultsQuery(
-      'SELECT material_id, quantity FROM sewing.purchase_items WHERE purchase_id=@pid',
-      substitutionValues: {'pid': pid});
-    for (final oi in old) {
-      await db.query(
-        'UPDATE sewing.materials SET stock_quantity = stock_quantity - @q WHERE id=@mid',
-        substitutionValues: {
-          'q':  oi['purchase_items']!['quantity'],
-          'mid': oi['purchase_items']!['material_id']
-        });
-    }
+  //   // Roll back quantities
+  //   final old = await db.mappedResultsQuery(
+  //     'SELECT material_id, quantity FROM sewing.purchase_items WHERE purchase_id=@pid',
+  //     substitutionValues: {'pid': pid});
+  //   for (final oi in old) {
+  //     await db.query(
+  //       'UPDATE sewing.materials SET stock_quantity = stock_quantity - @q WHERE id=@mid',
+  //       substitutionValues: {
+  //         'q':  oi['purchase_items']!['quantity'],
+  //         'mid': oi['purchase_items']!['material_id']
+  //       });
+  //   }
 
-    // Delete purchase
-    await db.query(
-      'DELETE FROM sewing.purchases WHERE id=@id',
-      substitutionValues: {'id': pid});
+  //   // Delete purchase
+  //   await db.query(
+  //     'DELETE FROM sewing.purchases WHERE id=@id',
+  //     substitutionValues: {'id': pid});
 
-    return Response.ok(jsonEncode({'status': 'deleted'}),
-        headers: {'Content-Type': 'application/json'});
-  });
+  //   return Response.ok(jsonEncode({'status': 'deleted'}),
+  //       headers: {'Content-Type': 'application/json'});
+  // });
 
   return router;
 }

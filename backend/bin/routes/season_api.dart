@@ -5,6 +5,12 @@ import 'package:postgres/postgres.dart';
 
 Router getSeasonRoutes(PostgreSQLConnection db) {
   final router = Router();
+num _num(dynamic v) => v == null
+    ? 0.0
+    : (v is num ? v : (num.tryParse(v.toString()) ?? 0.0));
+int _int(dynamic v) => v == null
+    ? 0
+    : (v is int ? v : (int.tryParse(v.toString()) ?? 0));
 
   double parseNum(dynamic v) =>
       v == null ? 0.0 : (v is num ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0);

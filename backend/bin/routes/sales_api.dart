@@ -1,3 +1,4 @@
+
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:postgres/postgres.dart';
@@ -85,7 +86,7 @@ Router getSalesRoutes(PostgreSQLConnection db) {
       }).toList();
 
       final items = await db.query("""
-        SELECT fi.id, fi.model_id, m.name, fi.color, fi.quantity, fi.unit_price, m.global_price
+        SELECT fi.id, fi.model_id, m.name, fi.color, fi.quantity, fi.unit_price, m.global_price, m.image_url
         FROM sewing.facture_items fi
         JOIN sewing.models m ON fi.model_id = m.id
         WHERE fi.facture_id = @id
@@ -106,6 +107,7 @@ Router getSalesRoutes(PostgreSQLConnection db) {
           "unit_price": unitPrice,
           "line_total": quantity * unitPrice,
           "profit_per_piece": profitPerPiece,
+          "image_url": r[7],
         };
       }).toList();
 
@@ -171,7 +173,8 @@ Router getSalesRoutes(PostgreSQLConnection db) {
           m.id,
           m.name,
           COALESCE(SUM(pi.quantity), 0) AS available_quantity,
-          m.global_price AS cost_price
+          m.global_price AS cost_price,
+          m.image_url
         FROM sewing.models m
         LEFT JOIN sewing.product_inventory pi
           ON pi.model_id = m.id
@@ -181,13 +184,12 @@ Router getSalesRoutes(PostgreSQLConnection db) {
         ORDER BY m.name
       """);
       
-      final models = rows.map((r) {
-        return {
-          'id': r[0] as int,
-          'name': r[1] as String,
-          'available_quantity': parseInt(r[2]),
-          'cost_price': parseNum(r[3]),
-        };
+      final models = rows.map((r) => {
+        'id': r[0] as int,
+        'name': r[1] as String,
+        'available_quantity': parseInt(r[2]),
+        'cost_price': parseNum(r[3]),
+        'image_url': r[4] as String?,
       }).toList();
       
       return Response.ok(jsonEncode(models),
@@ -396,20 +398,92 @@ Router getSalesRoutes(PostgreSQLConnection db) {
   });
 
   router.delete('/factures/<id>', (Request req, String id) async {
-    try {
-      await db.query(
-        'DELETE FROM sewing.factures WHERE id = @id',
-        substitutionValues: {'id': int.parse(id)},
-      );
-      return Response.ok(jsonEncode({'deleted': id}),
-          headers: {'Content-Type': 'application/json'});
-    } catch (e) {
-      return Response.internalServerError(
-        body: jsonEncode({"error": "Failed to delete facture: $e"}),
-        headers: {"Content-Type": "application/json"},
+  return await db.transaction((txn) async {
+    final fid = int.parse(id);
+
+    // 1) Ensure facture exists
+    final exists = await txn.query(
+      'SELECT 1 FROM sewing.factures WHERE id = @fid',
+      substitutionValues: {'fid': fid},
+    );
+    if (exists.isEmpty) {
+      return Response.notFound(
+        jsonEncode({'error': 'Facture not found'}),
+        headers: {'Content-Type': 'application/json'},
       );
     }
+
+    // 2) Load sold items (model_id + quantity) for this facture
+    final sold = await txn.query(
+      '''
+      SELECT model_id, quantity
+        FROM sewing.facture_items
+       WHERE facture_id = @fid
+      ''',
+      substitutionValues: {'fid': fid},
+    );
+
+    // 3) Find the “ready” warehouse
+    final wh = await txn.query(
+      "SELECT id FROM sewing.warehouses WHERE type = 'ready' LIMIT 1"
+    );
+    if (wh.isEmpty) {
+      throw Exception('Ready warehouse not configured');
+    }
+    final readyWid = wh.first[0] as int;
+
+    // 4) Upsert each returned quantity back into ready stock
+    for (final row in sold) {
+      final modelId = row[0] as int;
+      final qty     = row[1] as num;
+
+      await txn.query(
+        '''
+        INSERT INTO sewing.product_inventory
+          (warehouse_id, model_id, quantity)
+        VALUES
+          (@wid, @mid, @qty)
+        ON CONFLICT (warehouse_id, model_id)
+        DO UPDATE
+          SET quantity = sewing.product_inventory.quantity + EXCLUDED.quantity
+        ''',
+        substitutionValues: {
+          'wid': readyWid,
+          'mid': modelId,
+          'qty': qty,
+        },
+      );
+    }
+
+    // 5) Remove payments, items, and the facture
+    await txn.query(
+      'DELETE FROM sewing.facture_payments WHERE facture_id = @fid',
+      substitutionValues: {'fid': fid},
+    );
+    await txn.query(
+      'DELETE FROM sewing.facture_items    WHERE facture_id = @fid',
+      substitutionValues: {'fid': fid},
+    );
+    await txn.query(
+      'DELETE FROM sewing.factures         WHERE id          = @fid',
+      substitutionValues: {'fid': fid},
+    );
+
+    return Response.ok(
+      jsonEncode({
+        'status': 'deleted',
+        'restored_to_warehouse': readyWid,
+      }),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }).catchError((e) {
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to delete and restore stock: $e'}),
+      headers: {'Content-Type': 'application/json'},
+    );
   });
+});
+
 
   router.get('/clients/<id>/factures', (Request request, String id) async {
     try {
@@ -490,7 +564,7 @@ Router getSalesRoutes(PostgreSQLConnection db) {
     }
   });
 
-  router.get('/clients/<id>/account', (Request request, String id) async {
+router.get('/clients/<id>/account', (Request request, String id) async {
     try {
       final factures = await db.query("""
         SELECT id, facture_date, total_amount, amount_paid_on_creation
@@ -650,35 +724,36 @@ Router getSalesRoutes(PostgreSQLConnection db) {
   });
 
   router.get('/models/by_season/<sid>', (Request req, String sid) async {
-    try {
-      final rows = await db.query("""
-        SELECT DISTINCT m.id, m.name, m.global_price AS cost_price,
-               COALESCE(SUM(pi.quantity), 0) AS available_quantity
-        FROM sewing.facture_items fi
-        JOIN sewing.factures f ON fi.facture_id = f.id
-        JOIN sewing.seasons s ON f.facture_date BETWEEN s.start_date AND s.end_date
-        JOIN sewing.models m ON fi.model_id = m.id
-        LEFT JOIN sewing.product_inventory pi ON pi.model_id = m.id
-        LEFT JOIN sewing.warehouses w ON pi.warehouse_id = w.id AND w.type = 'ready'
-        WHERE s.id = @sid
-        GROUP BY m.id
-        ORDER BY m.name
-      """, substitutionValues: {'sid': int.parse(sid)});
-      final models = rows.map((r) => {
-        'id': r[0],
-        'name': r[1],
-        'cost_price': parseNum(r[2]),
-        'available_quantity': parseInt(r[3]),
-      }).toList();
-      return Response.ok(jsonEncode(models), headers: {'Content-Type': 'application/json'});
-    } catch (e) {
-      return Response.internalServerError(
-        body: jsonEncode({'error': e.toString()}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-  });
-
+  try {
+    final rows = await db.query("""
+      SELECT DISTINCT m.id, m.name, m.global_price AS cost_price,
+             COALESCE(SUM(pi.quantity), 0) AS available_quantity,
+             m.image_url
+      FROM sewing.facture_items fi
+      JOIN sewing.factures f ON fi.facture_id = f.id
+      JOIN sewing.seasons s ON f.facture_date BETWEEN s.start_date AND s.end_date
+      JOIN sewing.models m ON fi.model_id = m.id
+      LEFT JOIN sewing.product_inventory pi ON pi.model_id = m.id
+      LEFT JOIN sewing.warehouses w ON pi.warehouse_id = w.id AND w.type = 'ready'
+      WHERE s.id = @sid
+      GROUP BY m.id
+      ORDER BY m.name
+    """, substitutionValues: {'sid': int.parse(sid)});
+    final models = rows.map((r) => {
+      'id': r[0],
+      'name': r[1],
+      'cost_price': parseNum(r[2]),
+      'available_quantity': parseInt(r[3]),
+      'image_url': r[4] as String?,
+    }).toList();
+    return Response.ok(jsonEncode(models), headers: {'Content-Type': 'application/json'});
+  } catch (e) {
+    return Response.internalServerError(
+      body: jsonEncode({'error': e.toString()}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
   router.get('/factures/by_season/<seasonId>', (Request req, String seasonId) async {
     try {
       final results = await db.query("""

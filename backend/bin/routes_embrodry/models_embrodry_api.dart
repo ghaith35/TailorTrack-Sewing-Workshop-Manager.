@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:postgres/postgres.dart';
+import 'package:shelf_multipart/shelf_multipart.dart';
+import 'package:path/path.dart' as p;
 
 Router getEmbrodryModelsRoutes(PostgreSQLConnection db) {
   final router = Router();
@@ -17,7 +20,7 @@ Router getEmbrodryModelsRoutes(PostgreSQLConnection db) {
           ? v.toInt()
           : int.tryParse(v.toString()) ?? 0);
 
-  // ─── LIST ───────────────────────────────────────────────
+  // ─── LIST ─────────────────────────────────────────────
   router.get('/', (Request req) async {
     try {
       final qp  = req.url.queryParameters;
@@ -28,7 +31,6 @@ Router getEmbrodryModelsRoutes(PostgreSQLConnection db) {
       final sv    = <String, dynamic>{};
 
       if (cid != null) {
-        // cid == -1 means NULL filter (no client)
         if (cid < 0) {
           where.add('m.client_id IS NULL');
         } else {
@@ -54,6 +56,7 @@ Router getEmbrodryModelsRoutes(PostgreSQLConnection db) {
         m.total_price,
         m.description,
         m.model_type,
+        m.image_url,
         m.created_at
       FROM embroidery.models m
       LEFT JOIN embroidery.clients c ON m.client_id = c.id
@@ -75,7 +78,8 @@ Router getEmbrodryModelsRoutes(PostgreSQLConnection db) {
             'total_price':    _d(r[9]),
             'description':    r[10] as String?,
             'model_type':     r[11] as String,
-            'created_at':     (r[12] as DateTime).toIso8601String(),
+            'image_url':      r[12] as String?,
+            'created_at':     (r[13] as DateTime).toIso8601String(),
           }).toList();
 
       return Response.ok(
@@ -91,7 +95,7 @@ Router getEmbrodryModelsRoutes(PostgreSQLConnection db) {
     }
   });
 
-  // ─── GET ONE ───────────────────────────────────────────
+  // ─── GET ONE ─────────────────────────────────────────
   router.get('/<id|[0-9]+>', (Request req, String id) async {
     try {
       final rows = await db.query('''
@@ -106,6 +110,7 @@ Router getEmbrodryModelsRoutes(PostgreSQLConnection db) {
         m.total_price,
         m.description,
         m.model_type,
+        m.image_url,
         m.created_at
       FROM embroidery.models m
       LEFT JOIN embroidery.clients c ON m.client_id = c.id
@@ -133,7 +138,8 @@ Router getEmbrodryModelsRoutes(PostgreSQLConnection db) {
         'total_price':    _d(r[9]),
         'description':    r[10] as String?,
         'model_type':     r[11] as String,
-        'created_at':     (r[12] as DateTime).toIso8601String(),
+        'image_url':      r[12] as String?,
+        'created_at':     (r[13] as DateTime).toIso8601String(),
       };
       return Response.ok(
         jsonEncode(m),
@@ -147,63 +153,133 @@ Router getEmbrodryModelsRoutes(PostgreSQLConnection db) {
     }
   });
 
-  // ─── CREATE ────────────────────────────────────────────
-  // ─── CREATE ────────────────────────────────────────────
-router.post('/', (Request req) async {
-  try {
-    final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-    final d = DateTime.parse(data['model_date'] as String);
-    final newId = await db.transaction((tx) async {
-      final res = await tx.query('''
-        INSERT INTO embroidery.models
-          (client_id, season_id, model_date,
-           model_name, stitch_price, stitch_number,
-           description, model_type)
-        VALUES
-          (@cid, @sid, @d, @mn, @sp, @sn, @desc, @mt)
-        RETURNING id
-      ''', substitutionValues: {
-        'cid': data['client_id'],
-        'sid': data['season_id'],
-        'd'  : d,
-        'mn' : data['model_name'],
-        'sp' : _d(data['stitch_price']),
-        'sn' : _i(data['stitch_number']),
-        'desc': data['description'],
-        'mt' : data['model_type'],
-      });
-      return res.first[0] as int;
-    });
-    return Response(201,
-      body: jsonEncode({'id': newId}),
-      headers: {'Content-Type': 'application/json'},
-    );
-  } on PostgreSQLException catch (e) {
-    if (e.code == '23505' /* unique_violation */) {
+  // ─── CREATE ─────────────────────────────────────────
+  router.post('/', (Request request) async {
+    final form = request.formData();
+    if (form == null) {
       return Response(400,
-        body: jsonEncode({
-          'error': 'duplicate_model_name',
-          'message': 'اسم الموديل مستخدم مسبقاً'
-        }),
+        body: jsonEncode({'error': 'Expected multipart/form-data'}),
         headers: {'Content-Type': 'application/json'},
       );
     }
-    rethrow;  // let other errors bubble up
-  } catch (e, st) {
-    print('POST /embrodry/models error: $e\n$st');
-    return Response.internalServerError(
-      body: jsonEncode({'error': e.toString()}),
-      headers: {'Content-Type': 'application/json'},
-    );
-  }
-});
 
-// ─── UPDATE ────────────────────────────────────────────
-router.put('/<id|[0-9]+>', (Request req, String id) async {
-  try {
-    final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-    final d = DateTime.parse(data['model_date'] as String);
-    final count = await db.execute('''
+    final fields = <String, String>{};
+    String? imageUrl;
+
+    await for (final part in form.formData) {
+      if (part.filename != null) {
+        final bytes = await part.part.readBytes();
+        final fname = p.basename(part.filename!);
+        final file  = File('public/images/$fname');
+        await file.create(recursive: true);
+        await file.writeAsBytes(bytes);
+        imageUrl = '/images/$fname';
+      } else {
+        fields[part.name] = await part.part.readString();
+      }
+    }
+
+    try {
+      final d = DateTime.parse(fields['model_date']!);
+      final newId = await db.transaction((tx) async {
+        final res = await tx.query('''
+          INSERT INTO embroidery.models
+            (client_id, season_id, model_date,
+             model_name, stitch_price, stitch_number,
+             description, model_type, image_url)
+          VALUES
+            (@cid, @sid, @d, @mn, @sp, @sn, @desc, @mt, @img)
+          RETURNING id
+        ''', substitutionValues: {
+          'cid': fields['client_id'] != 'null'
+              ? int.tryParse(fields['client_id']!)
+              : null,
+          'sid': fields['season_id'] != 'null'
+              ? int.tryParse(fields['season_id']!)
+              : null,
+          'd'  : d,
+          'mn' : fields['model_name']!,
+          'sp' : _d(fields['stitch_price']),
+          'sn' : _i(fields['stitch_number']),
+          'desc': fields['description'],
+          'mt' : fields['model_type']!,
+          'img': imageUrl ?? '',
+        });
+        return res.first[0] as int;
+      });
+      return Response(201,
+        body: jsonEncode({'id': newId}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } on PostgreSQLException catch (e) {
+      if (e.code == '23505') {
+        return Response(400,
+          body: jsonEncode({
+            'error': 'duplicate_model_name',
+            'message': 'اسم الموديل مستخدم مسبقاً'
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      rethrow;
+    } catch (e, st) {
+      print('POST /embrodry/models error: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  });
+
+  // ─── UPDATE ─────────────────────────────────────────
+  router.put('/<id|[0-9]+>', (Request request, String id) async {
+    final form = request.formData();
+    if (form == null) {
+      return Response(400,
+        body: jsonEncode({'error': 'Expected multipart/form-data'}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+
+    final fields = <String, String>{};
+    String? newImageUrl;
+    bool clearImage = false;
+
+    await for (final part in form.formData) {
+      if (part.name == 'image' && part.filename == null) {
+        final text = await part.part.readString();
+        if (text.isEmpty) clearImage = true;
+      } else if (part.filename != null) {
+        final bytes = await part.part.readBytes();
+        final fname = p.basename(part.filename!);
+        final target = File('public/images/$fname');
+        await target.create(recursive: true);
+        await target.writeAsBytes(bytes);
+        newImageUrl = '/images/$fname';
+      } else {
+        fields[part.name] = await part.part.readString();
+      }
+    }
+
+    // delete old file if replaced/cleared
+    if (newImageUrl != null || clearImage) {
+      final oldRes = await db.query(
+        'SELECT image_url FROM embroidery.models WHERE id = @id',
+        substitutionValues: {'id': int.parse(id)},
+      );
+      if (oldRes.isNotEmpty) {
+        final oldUrl = oldRes.first[0] as String?;
+        if (oldUrl != null && oldUrl.startsWith('/images/')) {
+          final oldFile = File('public${oldUrl}');
+          if (await oldFile.exists()) await oldFile.delete();
+        }
+      }
+    }
+
+    try {
+      final modelDate = DateTime.parse(fields['model_date']!);
+
+      final rows = await db.query('''
       UPDATE embroidery.models SET
         client_id     = @cid,
         season_id     = @sid,
@@ -212,55 +288,78 @@ router.put('/<id|[0-9]+>', (Request req, String id) async {
         stitch_price  = @sp,
         stitch_number = @sn,
         description   = @desc,
-        model_type    = @mt
+        model_type    = @mt,
+        image_url     = @img
       WHERE id = @id
-    ''', substitutionValues: {
-      'id'  : int.parse(id),
-      'cid' : data['client_id'],
-      'sid' : data['season_id'],
-      'd'   : d,
-      'mn'  : data['model_name'],
-      'sp'  : _d(data['stitch_price']),
-      'sn'  : _i(data['stitch_number']),
-      'desc': data['description'],
-      'mt'  : data['model_type'],
-    });
-    if (count == 0) {
-      return Response.notFound(
-        jsonEncode({'error': 'not found'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-    return Response.ok(
-      jsonEncode({'status': 'updated'}),
-      headers: {'Content-Type': 'application/json'},
-    );
-  } on PostgreSQLException catch (e) {
-    if (e.code == '23505') {
-      return Response(400,
-        body: jsonEncode({
-          'error': 'duplicate_model_name',
-          'message': 'اسم الموديل مستخدم مسبقاً'
-        }),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-    rethrow;
-  } catch (e, st) {
-    print('PUT /embrodry/models error: $e\n$st');
-    return Response.internalServerError(
-      body: jsonEncode({'error': e.toString()}),
-      headers: {'Content-Type': 'application/json'},
-    );
-  }
-});
+      RETURNING id
+      ''', substitutionValues: {
+        'id'  : int.parse(id),
+        'cid' : fields['client_id']  != 'null'
+            ? int.tryParse(fields['client_id']!)  : null,
+        'sid' : fields['season_id']  != 'null'
+            ? int.tryParse(fields['season_id']!)  : null,
+        'd'   : modelDate,
+        'mn'  : fields['model_name']!,
+        'sp'  : _d(fields['stitch_price']),
+        'sn'  : _i(fields['stitch_number']),
+        'desc': fields['description'],
+        'mt'  : fields['model_type']!,
+        'img' : clearImage ? '' : (newImageUrl ?? fields['image_url'] ?? ''),
+      });
 
-  // ─── DELETE ────────────────────────────────────────────
+      if (rows.isEmpty) {
+        return Response.notFound(
+          jsonEncode({'error': 'not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      final updatedId = rows.first[0] as int;
+      return Response.ok(
+        jsonEncode({'id': updatedId}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    } on PostgreSQLException catch (e) {
+      if (e.code == '23505') {
+        return Response(400,
+          body: jsonEncode({
+            'error'  : 'duplicate_model_name',
+            'message': 'اسم الموديل مستخدم مسبقاً'
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+      rethrow;
+    } catch (e, st) {
+      print('PUT /embrodry/models error: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
+  });
+
+  // ─── DELETE ─────────────────────────────────────────
   router.delete('/<id|[0-9]+>', (Request req, String id) async {
     try {
+      final modelId = int.parse(id);
+
+      // delete stored image file if exists
+      final imgRes = await db.query(
+        'SELECT image_url FROM embroidery.models WHERE id = @id',
+        substitutionValues: {'id': modelId},
+      );
+      if (imgRes.isNotEmpty) {
+        final imageUrl = imgRes.first[0] as String?;
+        if (imageUrl != null && imageUrl.startsWith('/images/')) {
+          final file = File('public${imageUrl}');
+          if (await file.exists()) await file.delete();
+        }
+      }
+
       final count = await db.execute(
         'DELETE FROM embroidery.models WHERE id = @id',
-        substitutionValues: {'id': int.parse(id)},
+        substitutionValues: {'id': modelId},
       );
       if (count == 0) {
         return Response.notFound(
@@ -280,7 +379,7 @@ router.put('/<id|[0-9]+>', (Request req, String id) async {
     }
   });
 
-  // ─── HELPERS ───────────────────────────────────────────
+  // ─── HELPERS ────────────────────────────────────────
   router.get('/clients', (Request _) async {
     try {
       final rows = await db.query(

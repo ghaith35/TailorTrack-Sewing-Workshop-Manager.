@@ -2,6 +2,10 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:postgres/postgres.dart';
 import 'dart:convert';
+import 'package:shelf_multipart/shelf_multipart.dart';
+import 'package:shelf_static/shelf_static.dart';
+import 'package:path/path.dart' as p;
+import 'dart:io';
 
 Router getModelsRoutes(PostgreSQLConnection db) {
   final router = Router();
@@ -345,57 +349,89 @@ router.post("/complete-production/<batchId>", (Request request, String batchId) 
     }
   });
 
-  // Create model
-  router.post('/', (Request request) async {
-    try {
-      final body = await request.readAsString();
-      final data = jsonDecode(body) as Map<String, dynamic>;
+// ──────────────────────────────────────────────────────────────────────────────
+// CREATE MODEL (POST /models/)
+// ──────────────────────────────────────────────────────────────────────────────
+router.post('/', (Request request) async {
+  // 1) Parse multipart
+  final form = request.formData();
+  if (form == null) {
+    return Response(
+      400,
+      body: jsonEncode({'error': 'Expected multipart/form-data'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
 
-      final results = await db.query('''
+  // 2) Read all parts exactly once
+  final parts = await form.formData.toList();
+  final fields = <String, String>{};
+  String? imageUrl;
+
+  for (final part in parts) {
+    if (part.name == 'image' && part.filename != null) {
+      final bytes = await part.part.readBytes();
+      final fname = p.basename(part.filename!);
+      final target = File('public/images/$fname');
+      await target.create(recursive: true);
+      await target.writeAsBytes(bytes);
+      imageUrl = '/images/$fname';
+    } else {
+      fields[part.name] = await part.part.readString();
+    }
+  }
+
+  // 3) Insert into DB
+  try {
+    final result = await db.query(r'''
       INSERT INTO sewing.models (
-        name, start_date, image_url, cut_price, sewing_price, press_price, 
-        assembly_price, electricity, rent, maintenance, water, washing, 
-        embroidery, laser, printing, crochet, sizes, nbr_of_sizes
+        name, start_date, image_url,
+        cut_price, sewing_price, press_price,
+        assembly_price, electricity, rent,
+        maintenance, water, washing,
+        embroidery, laser, printing, crochet,
+        sizes, nbr_of_sizes
       ) VALUES (
-        @name, @start_date, @image_url, @cut_price, @sewing_price, @press_price,
-        @assembly_price, @electricity, @rent, @maintenance, @water, @washing,
-        @embroidery, @laser, @printing, @crochet, @sizes, @nbr_of_sizes
+        @name, @start_date, @image_url,
+        @cut_price, @sewing_price, @press_price,
+        @assembly_price, @electricity, @rent,
+        @maintenance, @water, @washing,
+        @embroidery, @laser, @printing, @crochet,
+        @sizes, @nbr_of_sizes
       ) RETURNING id
     ''', substitutionValues: {
-      'name': data['name'],
-      'start_date': DateTime.parse(data['start_date']),
-      'image_url': data['image_url'] ?? '',
-      'cut_price': parseNum(data['cut_price']),
-      'sewing_price': parseNum(data['sewing_price']),
-      'press_price': parseNum(data['press_price']),
-      'assembly_price': parseNum(data['assembly_price']),
-      'electricity': parseNum(data['electricity']),
-      'rent': parseNum(data['rent']),
-      'maintenance': parseNum(data['maintenance']),
-      'water': parseNum(data['water']),
-      'washing': parseNum(data['washing']),
-      'embroidery': parseNum(data['embroidery']),
-      'laser': parseNum(data['laser']),
-      'printing': parseNum(data['printing']),
-      'crochet': parseNum(data['crochet']),
-      'sizes': data['sizes'],
-      'nbr_of_sizes': parseInt(data['nbr_of_sizes']),
+      'name'          : fields['name']!,
+      'start_date'    : DateTime.parse(fields['start_date']!),
+      'image_url'     : imageUrl ?? '',
+      'cut_price'     : double.parse(fields['cut_price']!),
+      'sewing_price'  : double.parse(fields['sewing_price']!),
+      'press_price'   : double.parse(fields['press_price']!),
+      'assembly_price': double.parse(fields['assembly_price']!),
+      'electricity'   : double.parse(fields['electricity']!),
+      'rent'          : double.parse(fields['rent']!),
+      'maintenance'   : double.parse(fields['maintenance']!),
+      'water'         : double.parse(fields['water']!),
+      'washing'       : double.parse(fields['washing']!),
+      'embroidery'    : double.parse(fields['embroidery']!),
+      'laser'         : double.parse(fields['laser']!),
+      'printing'      : double.parse(fields['printing']!),
+      'crochet'       : double.parse(fields['crochet']!),
+      'sizes'         : fields['sizes']!,
+      'nbr_of_sizes'  : int.parse(fields['nbr_of_sizes']!),
     });
 
-
-      final newId = parseInt(results.first[0]);
-
-      return Response(201,
-        body: jsonEncode({'id': newId, 'message': 'Model created successfully'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    } catch (e) {
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Failed to create model: $e'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-  });
+    final newId = result.first[0] as int;
+    return Response(201,
+      body: jsonEncode({'id': newId}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } catch (e) {
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to create model: $e'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
 
   // =====================
   // GENERIC ROUTES WITH PARAMETERS (AFTER SPECIFIC ROUTES)
@@ -454,140 +490,207 @@ router.post("/complete-production/<batchId>", (Request request, String batchId) 
   });
 
   // Update model
-  router.put('/<id>', (Request request, String id) async {
-    try {
-      final body = await request.readAsString();
-      final data = jsonDecode(body) as Map<String, dynamic>;
+ // UPDATE MODEL
+// ──────────────────────────────────────────────────────────────────────────────
+// UPDATE MODEL (PUT /models/<id>/)
+// ──────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────
+// UPDATE MODEL (PUT /models/<id>/)
+// ──────────────────────────────────────────────────────────────────────────────
+router.put('/<id|[0-9]+>', (Request request, String id) async {
+  // 1) Parse multipart
+  final form = request.formData();
+  if (form == null) {
+    return Response(
+      400,
+      body: jsonEncode({'error': 'Expected multipart/form-data'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
 
-      await db.query('''
+  // 2) Read all parts exactly once
+  final parts = await form.formData.toList();
+  final fields = <String, String>{};
+  String? newImageUrl;
+
+  for (final part in parts) {
+    if (part.name == 'image' && part.filename != null) {
+      final bytes = await part.part.readBytes();
+      final fname = p.basename(part.filename!);
+      final target = File('public/images/$fname');
+      await target.create(recursive: true);
+      await target.writeAsBytes(bytes);
+      newImageUrl = '/images/$fname';
+    } else {
+      fields[part.name] = await part.part.readString();
+    }
+  }
+
+  // 3) Remove old image if replaced
+  final old = await db.query(
+    'SELECT image_url FROM sewing.models WHERE id = @id',
+    substitutionValues: {'id': int.parse(id)},
+  );
+  if (old.isNotEmpty && newImageUrl != null) {
+    final oldUrl = old.first[0] as String;
+    if (oldUrl.startsWith('/images/')) {
+      final oldFile = File('public${oldUrl}');
+      if (await oldFile.exists()) await oldFile.delete();
+    }
+  }
+
+  // 4) Update DB
+  try {
+    await db.query(r'''
       UPDATE sewing.models SET
-        name = @name, start_date = @start_date, image_url = @image_url,
-        cut_price = @cut_price, sewing_price = @sewing_price, press_price = @press_price,
-        assembly_price = @assembly_price, electricity = @electricity, rent = @rent,
-        maintenance = @maintenance, water = @water, washing = @washing,
-        embroidery = @embroidery, laser = @laser, printing = @printing,
-        crochet = @crochet,
-        sizes = @sizes,
-        nbr_of_sizes = @nbr_of_sizes
+        name           = @name,
+        start_date     = @start_date,
+        image_url      = COALESCE(@image_url, image_url),
+        cut_price      = @cut_price,
+        sewing_price   = @sewing_price,
+        press_price    = @press_price,
+        assembly_price = @assembly_price,
+        electricity    = @electricity,
+        rent           = @rent,
+        maintenance    = @maintenance,
+        water          = @water,
+        washing        = @washing,
+        embroidery     = @embroidery,
+        laser          = @laser,
+        printing       = @printing,
+        crochet        = @crochet,
+        sizes          = @sizes,
+        nbr_of_sizes   = @nbr_of_sizes
       WHERE id = @id
     ''', substitutionValues: {
-      'id': int.parse(id),
-      'name': data['name'],
-      'start_date': DateTime.parse(data['start_date']),
-      'image_url': data['image_url'] ?? '',
-      'cut_price': parseNum(data['cut_price']),
-      'sewing_price': parseNum(data['sewing_price']),
-      'press_price': parseNum(data['press_price']),
-      'assembly_price': parseNum(data['assembly_price']),
-      'electricity': parseNum(data['electricity']),
-      'rent': parseNum(data['rent']),
-      'maintenance': parseNum(data['maintenance']),
-      'water': parseNum(data['water']),
-      'washing': parseNum(data['washing']),
-      'embroidery': parseNum(data['embroidery']),
-      'laser': parseNum(data['laser']),
-      'printing': parseNum(data['printing']),
-      'crochet': parseNum(data['crochet']),
-      'sizes': data['sizes'],
-      'nbr_of_sizes': parseInt(data['nbr_of_sizes']),
+      'id'            : int.parse(id),
+      'name'          : fields['name']!,
+      'start_date'    : DateTime.parse(fields['start_date']!),
+      'image_url'     : newImageUrl,
+      'cut_price'     : double.parse(fields['cut_price']!),
+      'sewing_price'  : double.parse(fields['sewing_price']!),
+      'press_price'   : double.parse(fields['press_price']!),
+      'assembly_price': double.parse(fields['assembly_price']!),
+      'electricity'   : double.parse(fields['electricity']!),
+      'rent'          : double.parse(fields['rent']!),
+      'maintenance'   : double.parse(fields['maintenance']!),
+      'water'         : double.parse(fields['water']!),
+      'washing'       : double.parse(fields['washing']!),
+      'embroidery'    : double.parse(fields['embroidery']!),
+      'laser'         : double.parse(fields['laser']!),
+      'printing'      : double.parse(fields['printing']!),
+      'crochet'       : double.parse(fields['crochet']!),
+      'sizes'         : fields['sizes']!,
+      'nbr_of_sizes'  : int.parse(fields['nbr_of_sizes']!),
     });
 
-      return Response.ok(
-        jsonEncode({'message': 'Model updated successfully'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    } catch (e) {
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Failed to update model: $e'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-  });
+    // return just the id so the client can save/use it
+    return Response.ok(
+      jsonEncode({'id': int.parse(id)}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  } catch (e) {
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to update model: $e'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
 
   // Delete model
   // Delete model (and all its dependents), restoring raw materials from finished stock
+// Delete model (and all its dependents), restoring raw materials and removing its image file
 router.delete('/<id|[0-9]+>', (Request request, String id) async {
-  final mid = int.parse(id);
+  final modelId = int.parse(id);
 
   try {
+    // 0) Fetch and delete the image file if present
+    final imgRes = await db.query(
+      'SELECT image_url FROM sewing.models WHERE id = @id',
+      substitutionValues: {'id': modelId},
+    );
+    if (imgRes.isNotEmpty) {
+      final imageUrl = imgRes.first[0] as String?;
+      if (imageUrl != null && imageUrl.startsWith('/images/')) {
+        final file = File('public${imageUrl}');
+        if (await file.exists()) {
+          await file.delete();
+        }
+      }
+    }
+
+    // 1) Perform the same transactional cleanup you had before
     await db.transaction((txn) async {
-      // 0) Compute total finished‐goods quantity in inventory
-      final invRes = await txn.query(
-        r'''
+      // 1a) Compute total finished‐goods quantity
+      final invRes = await txn.query(r'''
         SELECT COALESCE(SUM(quantity), 0)::float
           FROM sewing.product_inventory
          WHERE model_id = @mid
-        ''',
-        substitutionValues: {'mid': mid},
-      );
+      ''', substitutionValues: {'mid': modelId});
       final totalFinished = (invRes.first[0] as double);
 
       if (totalFinished > 0) {
-        // 1) For each component of this model, add back the used raw materials
-        final compRows = await txn.query(
-          r'''
+        // 1b) Return used raw materials
+        final comps = await txn.query(r'''
           SELECT material_id, quantity_needed::float
             FROM sewing.model_components
            WHERE model_id = @mid
-          ''',
-          substitutionValues: {'mid': mid},
-        );
+        ''', substitutionValues: {'mid': modelId});
 
-        for (final row in compRows) {
-          final matId       = row[0] as int;
-          final qtyPerModel = row[1] as double;
-          final restoreQty  = qtyPerModel * totalFinished;
-
-          await txn.query(
-            r'''
+        for (final row in comps) {
+          final matId      = row[0] as int;
+          final perModel   = row[1] as double;
+          final restoreQty = perModel * totalFinished;
+          await txn.query(r'''
             UPDATE sewing.materials
                SET stock_quantity = stock_quantity + @restore
              WHERE id = @matId
-            ''',
-            substitutionValues: {
-              'restore': restoreQty,
-              'matId'  : matId,
-            },
-          );
+          ''', substitutionValues: {
+            'restore': restoreQty,
+            'matId'  : matId,
+          });
         }
       }
 
-      // 2) Delete finished‐goods stock entries
+      // 1c) Delete finished‐goods records
       await txn.query(
         'DELETE FROM sewing.product_inventory WHERE model_id = @mid',
-        substitutionValues: {'mid': mid},
+        substitutionValues: {'mid': modelId},
       );
 
-      // 3) Delete any production batches of this model
+      // 1d) Delete production batches
       await txn.query(
         'DELETE FROM sewing.production_batches WHERE model_id = @mid',
-        substitutionValues: {'mid': mid},
+        substitutionValues: {'mid': modelId},
       );
 
-      // 4) Delete historical production records
+      // 1e) Delete historical production
       await txn.query(
         'DELETE FROM sewing.model_production WHERE model_id = @mid',
-        substitutionValues: {'mid': mid},
+        substitutionValues: {'mid': modelId},
       );
 
-      // 5) Delete component links
+      // 1f) Delete component links
       await txn.query(
         'DELETE FROM sewing.model_components WHERE model_id = @mid',
-        substitutionValues: {'mid': mid},
+        substitutionValues: {'mid': modelId},
       );
 
-      // 6) Finally, delete the model itself
-      final del = await txn.query(
+      // 1g) Finally delete the model row
+      final deleted = await txn.query(
         'DELETE FROM sewing.models WHERE id = @mid RETURNING id',
-        substitutionValues: {'mid': mid},
+        substitutionValues: {'mid': modelId},
       );
-      if (del.isEmpty) throw StateError('not_found');
+      if (deleted.isEmpty) {
+        throw StateError('not_found');
+      }
     });
 
     return Response.ok(
-      jsonEncode({'message': 'Model deleted; raw materials restored.'}),
+      jsonEncode({'message': 'Model deleted; raw materials and image file cleaned up.'}),
       headers: {'Content-Type': 'application/json'},
     );
+
   } on StateError {
     return Response.notFound(
       jsonEncode({'error': 'Model not found'}),
@@ -752,38 +855,39 @@ router.get('/<id>/cost', (Request request, String id) async {
 
   // Get model materials
   router.get('/<id>/materials', (Request request, String id) async {
-    try {
-      final results = await db.query('''
-        SELECT mc.material_id, mc.quantity_needed, m.code as material_code,
-               COALESCE(avg_prices.avg_price, 0) as price,
-               (mc.quantity_needed * COALESCE(avg_prices.avg_price, 0)) as total_cost
-        FROM sewing.model_components mc
-        JOIN sewing.materials m ON mc.material_id = m.id
-        LEFT JOIN (
-          SELECT material_id, AVG(unit_price) as avg_price
-          FROM sewing.purchase_items
-          GROUP BY material_id
-        ) avg_prices ON mc.material_id = avg_prices.material_id
-        WHERE mc.model_id = @id
-      ''', substitutionValues: {'id': int.parse(id)});
+  try {
+    final results = await db.query('''
+      SELECT mc.material_id, mc.quantity_needed, m.code as material_code,
+             m.image_url,
+             COALESCE(avg_prices.avg_price, 0) as price,
+             (mc.quantity_needed * COALESCE(avg_prices.avg_price, 0)) as total_cost
+      FROM sewing.model_components mc
+      JOIN sewing.materials m ON mc.material_id = m.id
+      LEFT JOIN (
+        SELECT material_id, AVG(unit_price) as avg_price
+        FROM sewing.purchase_items
+        GROUP BY material_id
+      ) avg_prices ON mc.material_id = avg_prices.material_id
+      WHERE mc.model_id = @id
+    ''', substitutionValues: {'id': int.parse(id)});
 
-      List<Map<String, dynamic>> materials = results.map((row) => {
-        'material_id': parseInt(row[0]),
-        'quantity_needed': parseNum(row[1]),
-        'material_code': row[2],
-        'price': parseNum(row[3]),
-        'total_cost': parseNum(row[4]),
-      }).toList();
+    List<Map<String, dynamic>> materials = results.map((row) => {
+      'material_id': parseInt(row[0]),
+      'quantity_needed': parseNum(row[1]),
+      'material_code': row[2],
+      'image_url': row[3] ?? '',
+      'price': parseNum(row[4]),
+      'total_cost': parseNum(row[5]),
+    }).toList();
 
-      return Response.ok(jsonEncode(materials), headers: {'Content-Type': 'application/json'});
-    } catch (e) {
-      return Response.internalServerError(
-        body: jsonEncode({'error': 'Failed to fetch model materials: $e'}),
-        headers: {'Content-Type': 'application/json'},
-      );
-    }
-  });
-
+    return Response.ok(jsonEncode(materials), headers: {'Content-Type': 'application/json'});
+  } catch (e) {
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Failed to fetch model materials: $e'}),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+});
   // Add material to model
   router.post('/<id>/materials', (Request request, String id) async {
     try {

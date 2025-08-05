@@ -42,18 +42,19 @@ Router getEmbrodryWarehouseRoutes(PostgreSQLConnection db) {
           pi.quantity,
           pi.color,
           pi.size_label,
-          m.id         AS model_id,
+          m.id          AS model_id,
           m.model_date,
           m.model_name,
           m.stitch_price,
           m.stitch_number,
           m.total_price,
+          m.image_url,
           m.description,
           m.model_type,
-          c.id         AS client_id,
-          c.full_name  AS client_name,
-          s.id         AS season_id,
-          s.name       AS season_name
+          c.id          AS client_id,
+          c.full_name   AS client_name,
+          s.id          AS season_id,
+          s.name        AS season_name
         FROM embroidery.product_inventory pi
         JOIN embroidery.models       m ON m.id = pi.model_id
         LEFT JOIN embroidery.clients c ON c.id = m.client_id
@@ -63,22 +64,23 @@ Router getEmbrodryWarehouseRoutes(PostgreSQLConnection db) {
       ''', substitutionValues: sv);
 
       final out = rows.map((r) => {
-            'id'            : r[0],
-            'quantity'      : _d(r[1]),
-            'color'         : r[2] as String? ?? '',
-            'size_label'    : r[3] as String? ?? '',
-            'model_id'      : r[4],
-            'model_date'    : _fmt(r[5] as DateTime?),
-            'model_name'    : r[6],
-            'stitch_price'  : _d(r[7]),
-            'stitch_number' : _i(r[8]),
-            'total_price'   : _d(r[9]),
-            'description'   : r[10] as String? ?? '',
-            'model_type'    : r[11] as String,
-            'client_id'     : r[12],
-            'client_name'   : r[13] as String? ?? '',
-            'season_id'     : r[14],
-            'season_name'   : r[15] as String? ?? '',
+            'id'           : r[0],
+            'quantity'     : _d(r[1]),
+            'color'        : r[2] as String? ?? '',
+            'size_label'   : r[3] as String? ?? '',
+            'model_id'     : r[4],
+            'model_date'   : _fmt(r[5] as DateTime?),
+            'model_name'   : r[6],
+            'stitch_price' : _d(r[7]),
+            'stitch_number': _i(r[8]),
+            'total_price'  : _d(r[9]),
+            'image_url'    : r[10] as String? ?? '',
+            'description'  : r[11] as String? ?? '',
+            'model_type'   : r[12] as String,
+            'client_id'    : r[13],
+            'client_name'  : r[14] as String? ?? '',
+            'season_id'    : r[15],
+            'season_name'  : r[16] as String? ?? '',
           }).toList();
 
       return Response.ok(jsonEncode(out),
@@ -90,7 +92,6 @@ Router getEmbrodryWarehouseRoutes(PostgreSQLConnection db) {
           headers: {'Content-Type': 'application/json'});
     }
   });
-
   // POST /product-inventory
   // POST /product-inventory
 router.post('/product-inventory', (Request req) async {

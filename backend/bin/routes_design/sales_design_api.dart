@@ -358,17 +358,103 @@ Router getDesignSalesRoutes(PostgreSQLConnection db) {
   });
 
   // ======================== DELETE FACTURE ========================
-  router.delete('/factures/<id|[0-9]+>', (Request req, String id) async {
+  // ======================== DELETE FACTURE (with stock restore) ========================
+router.delete('/factures/<id|[0-9]+>', (Request req, String id) async {
+  return await db.transaction((txn) async {
     try {
       final fid = int.parse(id);
-      await db.query('DELETE FROM design.factures WHERE id = @id',
-          substitutionValues: {'id': fid});
-      return _okJson({'deleted': fid});
+
+      // 1) Ensure facture exists
+      final exist = await txn.query(
+        'SELECT 1 FROM design.factures WHERE id = @id',
+        substitutionValues: {'id': fid},
+      );
+      if (exist.isEmpty) {
+        return Response.notFound(
+          jsonEncode({'error': 'Facture not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // 2) Sum quantities per model for this facture
+      final soldRows = await txn.query("""
+        SELECT model_id,
+               SUM(quantity)::int AS total_qty
+        FROM design.facture_items
+        WHERE facture_id = @id
+        GROUP BY model_id
+      """, substitutionValues: {'id': fid});
+
+      // 3) Fetch the “ready” warehouse ID
+      final wh = await txn.query(
+        "SELECT id FROM design.warehouses WHERE type = 'ready' LIMIT 1"
+      );
+      if (wh.isEmpty) {
+        throw Exception('Ready warehouse not configured');
+      }
+      final readyWid = wh.first[0] as int;
+
+      // 4) Restore each model’s quantity
+      for (final row in soldRows) {
+        final modelId = row[0] as int;
+        final qty     = row[1] as int;
+
+        // Try updating existing stock row
+        final updated = await txn.execute("""
+          UPDATE design.product_inventory
+          SET quantity     = quantity + @qty,
+              last_updated = NOW()
+          WHERE warehouse_id = @wid
+            AND model_id     = @mid
+        """, substitutionValues: {
+          'wid': readyWid,
+          'mid': modelId,
+          'qty': qty,
+        });
+
+        // If no row was updated, insert a new one
+        if (updated == 0) {
+          await txn.execute("""
+            INSERT INTO design.product_inventory
+              (warehouse_id, model_id, quantity, last_updated)
+            VALUES
+              (@wid, @mid, @qty, NOW())
+          """, substitutionValues: {
+            'wid': readyWid,
+            'mid': modelId,
+            'qty': qty,
+          });
+        }
+      }
+
+      // 5) Delete payments, items, then the facture
+      await txn.query(
+        'DELETE FROM design.facture_payments WHERE facture_id = @id',
+        substitutionValues: {'id': fid},
+      );
+      await txn.query(
+        'DELETE FROM design.facture_items    WHERE facture_id = @id',
+        substitutionValues: {'id': fid},
+      );
+      await txn.query(
+        'DELETE FROM design.factures         WHERE id          = @id',
+        substitutionValues: {'id': fid},
+      );
+
+      return _okJson({
+        'deleted': fid,
+        'restored_to_warehouse': readyWid,
+      });
     } catch (e, st) {
       print('delete facture error: $e\n$st');
-      return _errJson({'error': 'Failed to delete facture', 'details': e.toString()});
+      return _errJson({
+        'error': 'Failed to delete facture and restore stock',
+        'details': e.toString()
+      });
     }
   });
+});
+
 
   // ======================== CLIENT FACTURES (expanded) ========================
   router.get('/clients/<id|[0-9]+>/factures', (Request req, String id) async {

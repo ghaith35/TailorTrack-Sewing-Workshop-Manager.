@@ -18,15 +18,15 @@ class _EmbroideryEmployeesSectionState extends State<EmbroideryEmployeesSection>
   int attType = 0;
   int selectedDataTab = 0;
   int selectedSalariesTab = 0;
-String get _apiUrl => '${globalServerUri.toString()}/embroidery-employees';
+  String get _apiUrl => '${globalServerUri.toString()}/embroidery-employees';
 
   // Attendance year/month selection
   List<int> _availableYears = [];
   List<String> _availableMonths = [];
   int? selectedYear;
   String? selectedYearMonth;
-List<int> _availableDays = [];
-int?     selectedDay;
+  List<int> _presenceDays = [];
+  int? selectedDay;
 
   // Salary year/month selection
   List<int> _salaryYears = [];
@@ -113,7 +113,11 @@ int?     selectedDay;
     await _fetchAttendanceYears();
     await _fetchSalaryYears();
     await fetchDataSection();
-    if (_availableYears.isNotEmpty) await fetchAttendance();
+    if (_availableYears.isNotEmpty) {
+      await _fetchAttendanceMonths();
+      await _fetchPresenceDays();
+      await fetchAttendance();
+    }
     if (_salaryYears.isNotEmpty) await fetchSalariesData();
   }
 
@@ -128,7 +132,7 @@ int?     selectedDay;
               final phone = (emp['phone'] ?? '').toLowerCase();
               final address = (emp['address'] ?? '').toLowerCase();
               final salary = emp['salary']?.toString() ?? '';
-              final shiftHours = emp['shift_hours']?.toString() ?? '';
+              final shiftHours = emp['shift_hours']?.shiftHours.contains(query);
               return fullName.contains(query) ||
                   phone.contains(query) ||
                   address.contains(query) ||
@@ -201,8 +205,7 @@ int?     selectedDay;
   Future<void> fetchEmployees() async {
     setState(() => isLoading = true);
     try {
-      final response = await http.get(Uri.parse('$_apiUrl'
-));
+      final response = await http.get(Uri.parse('$_apiUrl'));
       if (response.statusCode == 200) {
         setState(() {
           employees = jsonDecode(response.body);
@@ -227,7 +230,6 @@ int?     selectedDay;
             selectedYear = _availableYears.contains(DateTime.now().year)
                 ? DateTime.now().year
                 : _availableYears.first;
-            _fetchAttendanceMonths();
           }
         });
       }
@@ -256,95 +258,96 @@ int?     selectedDay;
   }
 
   Future<void> fetchAttendance() async {
-  if (selectedYearMonth == null) return;
-  setState(() {
-    attLoading = true;
-    attEmployees = [];
-    selectedEmployeeId = null;
-  });
-
-  final url = attType == 0
-      ? '${_apiUrl}/attendance/monthly?month=$selectedYearMonth'
-      : '${_apiUrl}/attendance/piece?month=$selectedYearMonth';
-
-  try {
-    final res = await http.get(Uri.parse(url));
-    if (res.statusCode == 200) {
-      setState(() {
-        attEmployees = jsonDecode(res.body);
-        selectedEmployeeId = attEmployees.isNotEmpty ? attEmployees.first['employee_id'] : null;
-      });
-    }
-  } catch (e) {
-    print('Error fetching attendance: $e');
-  } finally {
-    setState(() => attLoading = false);
-  }
-}
-
-
-  /// 3.1 Rebuild the list of days whenever month changes
-void _rebuildDays() {
-  if (selectedYearMonth == null) {
+    if (selectedYearMonth == null) return;
     setState(() {
-      _availableDays = [];
-      selectedDay   = null;
-    });
-    return;
-  }
-  final parts       = selectedYearMonth!.split('-');
-  final y           = int.parse(parts[0]);
-  final m           = int.parse(parts[1]);
-  final daysInMonth = DateTime(y, m + 1, 0).day;
-  setState(() {
-    _availableDays = List.generate(daysInMonth, (i) => i + 1);
-    selectedDay    = null;
-  });
-}
-
-/// 3.2 Fetch presence, passing year/month/day as query params
-Future<void> fetchPresence() async {
-    setState(() {
-        attLoading = true;
-        attEmployees = [];
+      attLoading = true;
+      attEmployees = [];
+      selectedEmployeeId = null;
     });
 
-    final params = <String, String>{};
-    if (selectedYear != null) params['year'] = '$selectedYear';
-    if (selectedYearMonth != null) params['month'] = selectedYearMonth!;
-    if (selectedDay != null) params['day'] = '$selectedDay';
-
-    final uri = Uri.http('127.0.0.1:8888', '/embroidery-employees/attendance', params.isEmpty ? null : params);
+    final url = attType == 0
+        ? '${_apiUrl}/attendance/monthly?month=$selectedYearMonth'
+        : '${_apiUrl}/attendance/piece?month=$selectedYearMonth';
 
     try {
-        final res = await http.get(uri);
-        if (res.statusCode == 200) {
-            setState(() {
-                attEmployees = jsonDecode(res.body);
-                _filteredPresence = attEmployees;
-
-                // Determine available days based on fetched attendance
-                _availableDays = attEmployees.map((att) {
-                    final dateParts = att['date'].split('-');
-                    return int.parse(dateParts[2]); // Get the day (DD)
-                }).toSet().toList(); // Use Set to avoid duplicates
-
-                selectedDay = null; // Reset selected day
-            });
-        }
+      final res = await http.get(Uri.parse(url));
+      if (res.statusCode == 200) {
+        setState(() {
+          attEmployees = jsonDecode(res.body);
+          selectedEmployeeId = attEmployees.isNotEmpty ? attEmployees.first['employee_id'] : null;
+        });
+      }
     } catch (e) {
-        print('Error fetching presence: $e');
+      print('Error fetching attendance: $e');
     } finally {
-        setState(() => attLoading = false);
+      setState(() => attLoading = false);
     }
-}
+  }
 
+  Future<void> _fetchPresenceDays() async {
+    if (selectedYearMonth == null) {
+      setState(() {
+        _presenceDays = [];
+        selectedDay = null;
+      });
+      return;
+    }
+    try {
+      final parts = selectedYearMonth!.split('-');
+      final year = int.parse(parts[0]);
+      final month = int.parse(parts[1]);
+      final daysInMonth = DateTime(year, month + 1, 0).day;
+      setState(() {
+        _presenceDays = List.generate(daysInMonth, (i) => i + 1);
+        final now = DateTime.now();
+if (year == now.year && month == now.month) {
+  selectedDay = now.day;
+} else {
+  selectedDay = null;
+}
+      });
+    } catch (e) {
+      print('Error calculating days: $e');
+    }
+  }
+
+  Future<void> fetchPresence() async {
+    setState(() {
+      attLoading = true;
+      attEmployees = [];
+    });
+
+    var url = '$_apiUrl/attendance';
+    if (selectedYearMonth != null) {
+      final parts = selectedYearMonth!.split('-');
+      final year = parts[0];
+      final month = parts[1].padLeft(2, '0');
+      url += '?year=$year&month=$month';
+      if (selectedDay != null) {
+        final day = selectedDay!.toString().padLeft(2, '0');
+        url += '&day=$day';
+      }
+    }
+
+    try {
+      final res = await http.get(Uri.parse(url));
+      if (res.statusCode == 200) {
+        setState(() {
+          attEmployees = jsonDecode(res.body);
+          _filteredPresence = attEmployees;
+        });
+      }
+    } catch (e) {
+      print('Error fetching presence: $e');
+    } finally {
+      setState(() => attLoading = false);
+    }
+  }
 
   Future<void> fetchDataSection() async {
     setState(() => isDataLoading = true);
     try {
-      final empRes = await http.get(Uri.parse('$_apiUrl'
-));
+      final empRes = await http.get(Uri.parse('$_apiUrl'));
       allEmployees = empRes.statusCode == 200 ? jsonDecode(empRes.body) : [];
       pieceEmployees = allEmployees.where((e) => e['payment_type'] == 'stitchly').toList();
 
@@ -457,7 +460,7 @@ Future<void> fetchPresence() async {
   }
 
   List<Map<String, dynamic>> _calculateMonthlySalaryRows(Map<int, num> debtData) {
-final List<Map<String, dynamic>> rows = [];
+    final List<Map<String, dynamic>> rows = [];
     final parts = selectedSalaryMonth!.split('-');
     final year = int.parse(parts[0]);
     final month = int.parse(parts[1]);
@@ -501,7 +504,7 @@ final List<Map<String, dynamic>> rows = [];
   }
 
   List<Map<String, dynamic>> _calculatePieceSalaryRows(Map<int, num> debtData) {
-final List<Map<String, dynamic>> rows = [];
+    final List<Map<String, dynamic>> rows = [];
     for (final emp in pieceAttendance) {
       final empId = emp['employee_id'] as int;
       final fullName = '${emp['first_name'] ?? ''} ${emp['last_name'] ?? ''}';
@@ -619,19 +622,6 @@ final List<Map<String, dynamic>> rows = [];
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('حدث خطأ أثناء الإضافة')));
     }
   }
-Future<void> _fetchAvailableDays() async {
-    if (selectedYear != null && selectedYearMonth != null) {
-        final parts = selectedYearMonth!.split('-');
-        final month = int.parse(parts[1]);
-        final year = selectedYear!;
-        final daysInMonth = DateTime(year, month + 1, 0).day;
-
-        setState(() {
-            _availableDays = List.generate(daysInMonth, (i) => i + 1);
-            selectedDay = null; // Reset selected day
-        });
-    }
-}
 
   void _showDatePickerForAllEmployees() async {
     final selectedDate = await showDatePicker(
@@ -691,181 +681,166 @@ Future<void> _fetchAvailableDays() async {
       ),
     );
     if (ok == true) {
-      await http.delete(Uri.parse('${_apiUrl}$id'));
+      await http.delete(Uri.parse('$_apiUrl/$id'));
       await fetchEmployees();
     }
   }
 
   Future<void> addOrEditLoan({ Map? initial }) async {
-  final _formKey = GlobalKey<FormState>();
-  int? employeeId = initial?['employee_id'] as int?;
-  final amountController = TextEditingController(text: initial?['amount']?.toString() ?? '');
-  int duration = initial?['duration_months'] as int? ?? 1;
-  DateTime selectedDate = initial != null && initial['loan_date'] != null
-      ? DateTime.parse(initial['loan_date'])
-      : DateTime.now();
+    final _formKey = GlobalKey<FormState>();
+    int? employeeId = initial?['employee_id'] as int?;
+    final amountController = TextEditingController(text: initial?['amount']?.toString() ?? '');
+    int duration = initial?['duration_months'] as int? ?? 1;
+    DateTime selectedDate = initial != null && initial['loan_date'] != null
+        ? DateTime.parse(initial['loan_date'])
+        : DateTime.now();
 
-  bool hasActiveLoan = false;
-  if (employeeId != null && initial == null) {
-    final checkRes = await http.get(Uri.parse('$_apiUrl/loans/check/$employeeId'));
-    if (checkRes.statusCode == 200) {
-      final data = jsonDecode(checkRes.body);
-      hasActiveLoan = data['has_active_loan'] ?? false;
+    bool hasActiveLoan = false;
+    if (employeeId != null && initial == null) {
+      final checkRes = await http.get(Uri.parse('$_apiUrl/loans/check/$employeeId'));
+      if (checkRes.statusCode == 200) {
+        final data = jsonDecode(checkRes.body);
+        hasActiveLoan = data['has_active_loan'] ?? false;
+      }
     }
-  }
 
-  await showDialog(
-    context: context,
-    builder: (_) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: Text(initial == null ? 'إضافة دين' : 'تعديل دين'),
-        content: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 1. Employee selector
-              DropdownButtonFormField<int>(
-                value: employeeId,
-                decoration: const InputDecoration(labelText: 'العامل'),
-                items: allEmployees.map((e) {
-                  return DropdownMenuItem<int>(
-                    value: e['id'] as int,
-                    child: Text('${e['first_name']} ${e['last_name']}'),
-                  );
-                }).toList(),
-                onChanged: (v) async {
-                  setState(() => employeeId = v);
-                  if (v != null && initial == null) {
-                    final resp = await http.get(Uri.parse('$_apiUrl/loans/check/$v'));
-                    if (resp.statusCode == 200) {
-                      final d = jsonDecode(resp.body);
-                      setState(() => hasActiveLoan = d['has_active_loan'] ?? false);
-                      if (hasActiveLoan) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('هذا العامل لديه دين نشطة بالفعل'),
-                            backgroundColor: Colors.orange,
-                          ),
-                        );
+    await showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(initial == null ? 'إضافة دين' : 'تعديل دين'),
+          content: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<int>(
+                  value: employeeId,
+                  decoration: const InputDecoration(labelText: 'العامل'),
+                  items: allEmployees.map((e) {
+                    return DropdownMenuItem<int>(
+                      value: e['id'] as int,
+                      child: Text('${e['first_name']} ${e['last_name']}'),
+                    );
+                  }).toList(),
+                  onChanged: (v) async {
+                    setState(() => employeeId = v);
+                    if (v != null && initial == null) {
+                      final resp = await http.get(Uri.parse('$_apiUrl/loans/check/$v'));
+                      if (resp.statusCode == 200) {
+                        final d = jsonDecode(resp.body);
+                        setState(() => hasActiveLoan = d['has_active_loan'] ?? false);
+                        if (hasActiveLoan) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('هذا العامل لديه دين نشطة بالفعل'),
+                              backgroundColor: Colors.orange,
+                            ),
+                          );
+                        }
                       }
                     }
-                  }
-                },
-                validator: (v) => v == null ? 'مطلوب' : null,
-              ),
-
-              // 2. Active-loan warning
-              if (hasActiveLoan)
-                const Padding(
-                  padding: EdgeInsets.only(top: 8.0),
-                  child: Text(
-                    'تحذير: هذا العامل لديه دين نشطة',
-                    style: TextStyle(color: Colors.orange),
-                  ),
+                  },
+                  validator: (v) => v == null ? 'مطلوب' : null,
                 ),
-
-              const SizedBox(height: 8),
-
-              // 3. Amount
-              TextFormField(
-                controller: amountController,
-                decoration: const InputDecoration(labelText: 'المبلغ'),
-                keyboardType: TextInputType.number,
-                validator: (v) {
-                  if (v == null || v.trim().isEmpty) return 'مطلوب';
-                  final num? val = num.tryParse(v);
-                  if (val == null || val <= 0) return 'أدخل مبلغاً صالحاً أكبر من صفر';
-                  return null;
-                },
-              ),
-
-              const SizedBox(height: 8),
-
-              // 4. Duration (months)
-              DropdownButtonFormField<int>(
-                value: duration,
-                decoration: const InputDecoration(labelText: 'المدة (شهور)'),
-                items: List.generate(12, (i) => i + 1)
-                    .map((m) => DropdownMenuItem(value: m, child: Text('$m')))
-                    .toList(),
-                onChanged: (v) => setState(() => duration = v!),
-                validator: (v) => (v == null || v <= 0) ? 'مطلوب' : null,
-              ),
-
-              const SizedBox(height: 8),
-
-              // 5. Date picker
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text('تاريخ الدين: ${selectedDate.toIso8601String().split('T').first}'),
-                trailing: const Icon(Icons.calendar_today),
-                onTap: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: selectedDate,
-                    firstDate: DateTime(2000),
-                    lastDate: DateTime(2100),
-                    locale: const Locale('ar', 'AR'),
-                  );
-                  if (picked != null) setState(() => selectedDate = picked);
-                },
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (!_formKey.currentState!.validate()) return;
-              if (hasActiveLoan && initial == null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('لا يمكن إضافة دين جديدة - العامل لديه دين نشطة'),
-                    backgroundColor: Colors.red,
+                if (hasActiveLoan)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8.0),
+                    child: Text(
+                      'تحذير: هذا العامل لديه دين نشطة',
+                      style: TextStyle(color: Colors.orange),
+                    ),
                   ),
-                );
-                return;
-              }
-
-              final data = {
-                'employee_id': employeeId,
-                'amount': num.parse(amountController.text.trim()),
-                'duration_months': duration,
-                'loan_date': selectedDate.toIso8601String(),
-              };
-
-              if (initial == null) {
-                await http.post(
-                  Uri.parse('$_apiUrl/loans'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode(data),
-                );
-              } else {
-                await http.put(
-                  Uri.parse('$_apiUrl/loans/${initial!['id']}'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode(data),
-                );
-              }
-
-              Navigator.pop(context);
-              await fetchDataSection();
-            },
-            child: const Text('حفظ'),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: amountController,
+                  decoration: const InputDecoration(labelText: 'المبلغ'),
+                  keyboardType: TextInputType.number,
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return 'مطلوب';
+                    final num? val = num.tryParse(v);
+                    if (val == null || val <= 0) return 'أدخل مبلغاً صالحاً أكبر من صفر';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<int>(
+                  value: duration,
+                  decoration: const InputDecoration(labelText: 'المدة (شهور)'),
+                  items: List.generate(12, (i) => i + 1)
+                      .map((m) => DropdownMenuItem(value: m, child: Text('$m')))
+                      .toList(),
+                  onChanged: (v) => setState(() => duration = v!),
+                  validator: (v) => (v == null || v <= 0) ? 'مطلوب' : null,
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('تاريخ الدين: ${selectedDate.toIso8601String().split('T').first}'),
+                  trailing: const Icon(Icons.calendar_today),
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: selectedDate,
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime(2100),
+                      locale: const Locale('ar', 'AR'),
+                    );
+                    if (picked != null) setState(() => selectedDate = picked);
+                  },
+                ),
+              ],
+            ),
           ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (!_formKey.currentState!.validate()) return;
+                if (hasActiveLoan && initial == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('لا يمكن إضافة دين جديدة - العامل لديه دين نشطة'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                  return;
+                }
+
+                final data = {
+                  'employee_id': employeeId,
+                  'amount': num.parse(amountController.text.trim()),
+                  'duration_months': duration,
+                  'loan_date': selectedDate.toIso8601String(),
+                };
+
+                if (initial == null) {
+                  await http.post(
+                    Uri.parse('$_apiUrl/loans'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(data),
+                  );
+                } else {
+                  await http.put(
+                    Uri.parse('$_apiUrl/loans/${initial!['id']}'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(data),
+                  );
+                }
+
+                Navigator.pop(context);
+                await fetchDataSection();
+              },
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
-}
-
-
-
+    );
+  }
 
   Future<void> deleteLoan(int id) async {
     await http.delete(Uri.parse('$_apiUrl/loans/$id'));
@@ -873,152 +848,131 @@ Future<void> _fetchAvailableDays() async {
   }
 
   Future<void> addOrEditPiece({ Map? initial }) async {
-  final _formKey = GlobalKey<FormState>();
-  int? employeeId = initial?['employee_id'] as int?;
-  int? modelId    = initial?['model_id']    as int?;
-  final qtyController   = TextEditingController(text: initial?['quantity']?.toString() ?? '');
-  final priceController = TextEditingController(text: initial?['piece_price']?.toString() ?? '');
-  DateTime selectedDate = initial != null && initial['record_date'] != null
-      ? DateTime.parse(initial['record_date'])
-      : DateTime.now();
+    final _formKey = GlobalKey<FormState>();
+    int? employeeId = initial?['employee_id'] as int?;
+    int? modelId    = initial?['model_id']    as int?;
+    final qtyController   = TextEditingController(text: initial?['quantity']?.toString() ?? '');
+    final priceController = TextEditingController(text: initial?['piece_price']?.toString() ?? '');
+    DateTime selectedDate = initial != null && initial['record_date'] != null
+        ? DateTime.parse(initial['record_date'])
+        : DateTime.now();
 
-  await showDialog(
-    context: context,
-    builder: (_) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: Text(initial == null ? 'إضافة غرزة' : 'تعديل غرزة'),
-        content: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 1. Employee selector
-              DropdownButtonFormField<int>(
-                value: employeeId,
-                decoration: const InputDecoration(labelText: 'العامل'),
-                items: pieceEmployees.map((e) {
-                  return DropdownMenuItem<int>(
-                    value: e['id'] as int,
-                    child: Text('${e['first_name']} ${e['last_name']}'),
-                  );
-                }).toList(),
-                onChanged: (v) => setState(() => employeeId = v),
-                validator: (v) => v == null ? 'مطلوب' : null,
-              ),
-
-              const SizedBox(height: 8),
-
-              // 2. Model selector
-              DropdownButtonFormField<int>(
-                value: modelId,
-                decoration: const InputDecoration(labelText: 'الموديل'),
-                items: allModels.map((m) {
-                  return DropdownMenuItem<int>(
-                    value: m['id'] as int,
-                    child: Text(m['name']),
-                  );
-                }).toList(),
-                onChanged: (v) => setState(() => modelId = v),
-                validator: (v) => v == null ? 'مطلوب' : null,
-              ),
-
-              const SizedBox(height: 8),
-
-              // 3. Quantity
-              TextFormField(
-                controller: qtyController,
-                decoration: const InputDecoration(labelText: 'الكمية'),
-                keyboardType: TextInputType.number,
-                validator: (v) {
-                  if (v == null || v.trim().isEmpty) return 'مطلوب';
-                  final int? q = int.tryParse(v);
-                  if (q == null || q <= 0) return 'أدخل كمية صحيحة أكبر من صفر';
-                  return null;
-                },
-              ),
-
-              const SizedBox(height: 8),
-
-              // 4. Price per piece
-              TextFormField(
-                controller: priceController,
-                decoration: const InputDecoration(labelText: 'سعر الغرزة'),
-                keyboardType: TextInputType.number,
-                validator: (v) {
-                  if (v == null || v.trim().isEmpty) return 'مطلوب';
-                  final num? p = num.tryParse(v);
-                  if (p == null || p <= 0) return 'أدخل سعراً صالحاً أكبر من صفر';
-                  return null;
-                },
-              ),
-
-              const SizedBox(height: 8),
-
-              // 5. Date picker
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text('تاريخ الغرزة: ${selectedDate.toIso8601String().split("T").first}'),
-                trailing: const Icon(Icons.calendar_today),
-                onTap: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: selectedDate,
-                    firstDate: DateTime(2000),
-                    lastDate: DateTime(2100),
-                    locale: const Locale('ar', 'AR'),
-                  );
-                  if (picked != null) setState(() => selectedDate = picked);
-                },
-              ),
-            ],
+    await showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(initial == null ? 'إضافة غرزة' : 'تعديل غرزة'),
+          content: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<int>(
+                  value: employeeId,
+                  decoration: const InputDecoration(labelText: 'العامل'),
+                  items: pieceEmployees.map((e) {
+                    return DropdownMenuItem<int>(
+                      value: e['id'] as int,
+                      child: Text('${e['first_name']} ${e['last_name']}'),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setState(() => employeeId = v),
+                  validator: (v) => v == null ? 'مطلوب' : null,
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<int>(
+                  value: modelId,
+                  decoration: const InputDecoration(labelText: 'الموديل'),
+                  items: allModels.map((m) {
+                    return DropdownMenuItem<int>(
+                      value: m['id'] as int,
+                      child: Text(m['name']),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setState(() => modelId = v),
+                  validator: (v) => v == null ? 'مطلوب' : null,
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: qtyController,
+                  decoration: const InputDecoration(labelText: 'الكمية'),
+                  keyboardType: TextInputType.number,
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return 'مطلوب';
+                    final int? q = int.tryParse(v);
+                    if (q == null || q <= 0) return 'أدخل كمية صحيحة أكبر من صفر';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: priceController,
+                  decoration: const InputDecoration(labelText: 'سعر الغرزة'),
+                  keyboardType: TextInputType.number,
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return 'مطلوب';
+                    final num? p = num.tryParse(v);
+                    if (p == null || p <= 0) return 'أدخل سعراً صالحاً أكبر من صفر';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('تاريخ الغرزة: ${selectedDate.toIso8601String().split("T").first}'),
+                  trailing: const Icon(Icons.calendar_today),
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: selectedDate,
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime(2100),
+                      locale: const Locale('ar', 'AR'),
+                    );
+                    if (picked != null) setState(() => selectedDate = picked);
+                  },
+                ),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (!_formKey.currentState!.validate()) return;
+                final data = {
+                  'employee_id': employeeId,
+                  'model_id':    modelId,
+                  'quantity':    int.parse(qtyController.text.trim()),
+                  'piece_price': num.parse(priceController.text.trim()),
+                  'record_date': selectedDate.toIso8601String(),
+                };
+                if (initial == null) {
+                  await http.post(
+                    Uri.parse('$_apiUrl/pieces'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(data),
+                  );
+                } else {
+                  await http.put(
+                    Uri.parse('$_apiUrl/pieces/${initial!['id']}'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(data),
+                  );
+                }
+                Navigator.pop(context);
+                await fetchDataSection();
+              },
+              child: const Text('حفظ'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              // 1) Validate form
-              if (!_formKey.currentState!.validate()) return;
-
-              // 2) Build payload
-              final data = {
-                'employee_id': employeeId,
-                'model_id':    modelId,
-                'quantity':    int.parse(qtyController.text.trim()),
-                'piece_price': num.parse(priceController.text.trim()),
-                'record_date': selectedDate.toIso8601String(),
-              };
-
-              // 3) Send to server
-              if (initial == null) {
-                await http.post(
-                  Uri.parse('$_apiUrl/pieces'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode(data),
-                );
-              } else {
-                await http.put(
-                  Uri.parse('$_apiUrl/pieces/${initial!['id']}'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode(data),
-                );
-              }
-
-              // 4) Close & refresh
-              Navigator.pop(context);
-              await fetchDataSection();
-            },
-            child: const Text('حفظ'),
-          ),
-        ],
       ),
-    ),
-  );
-}
-
+    );
+  }
 
   Future<void> deletePiece(int id) async {
     await http.delete(Uri.parse('$_apiUrl/pieces/$id'));
@@ -1026,120 +980,102 @@ Future<void> _fetchAvailableDays() async {
   }
 
   Future<void> addOrEditDebt({ Map? initial }) async {
-  final _formKey = GlobalKey<FormState>();
-  int? employeeId = initial?['employee_id'] as int?;
-  final amountController = TextEditingController(text: initial?['amount']?.toString() ?? '');
-  DateTime selectedDate = initial != null && initial['debt_date'] != null
-      ? DateTime.parse(initial['debt_date'])
-      : DateTime.now();
+    final _formKey = GlobalKey<FormState>();
+    int? employeeId = initial?['employee_id'] as int?;
+    final amountController = TextEditingController(text: initial?['amount']?.toString() ?? '');
+    DateTime selectedDate = initial != null && initial['debt_date'] != null
+        ? DateTime.parse(initial['debt_date'])
+        : DateTime.now();
 
-  await showDialog(
-    context: context,
-    builder: (_) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: Text(initial == null ? 'إضافة دين' : 'تعديل دين'),
-        content: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 1. Employee selector
-              DropdownButtonFormField<int>(
-                value: employeeId,
-                decoration: const InputDecoration(labelText: 'العامل'),
-                items: allEmployees.map((e) {
-                  return DropdownMenuItem<int>(
-                    value: e['id'] as int,
-                    child: Text('${e['first_name']} ${e['last_name']}'),
-                  );
-                }).toList(),
-                onChanged: (v) => setState(() => employeeId = v),
-                validator: (v) => v == null ? 'مطلوب' : null,
-              ),
-
-              const SizedBox(height: 8),
-
-              // 2. Amount field
-              TextFormField(
-                controller: amountController,
-                decoration: const InputDecoration(labelText: 'المبلغ'),
-                keyboardType: TextInputType.number,
-                validator: (v) {
-                  if (v == null || v.trim().isEmpty) return 'مطلوب';
-                  final num? val = num.tryParse(v);
-                  if (val == null || val <= 0) return 'أدخل مبلغاً صالحاً أكبر من صفر';
-                  return null;
-                },
-              ),
-
-              const SizedBox(height: 8),
-
-              // 3. Date picker
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text('تاريخ الدين: ${selectedDate.toIso8601String().split('T').first}'),
-                trailing: const Icon(Icons.calendar_today),
-                onTap: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: selectedDate,
-                    firstDate: DateTime(2000),
-                    lastDate: DateTime(2100),
-                    locale: const Locale('ar', 'AR'),
-                  );
-                  if (picked != null) setState(() => selectedDate = picked);
-                },
-              ),
-            ],
+    await showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(initial == null ? 'إضافة دين' : 'تعديل دين'),
+          content: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<int>(
+                  value: employeeId,
+                  decoration: const InputDecoration(labelText: 'العامل'),
+                  items: allEmployees.map((e) {
+                    return DropdownMenuItem<int>(
+                      value: e['id'] as int,
+                      child: Text('${e['first_name']} ${e['last_name']}'),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setState(() => employeeId = v),
+                  validator: (v) => v == null ? 'مطلوب' : null,
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: amountController,
+                  decoration: const InputDecoration(labelText: 'المبلغ'),
+                  keyboardType: TextInputType.number,
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return 'مطلوب';
+                    final num? val = num.tryParse(v);
+                    if (val == null || val <= 0) return 'أدخل مبلغاً صالحاً أكبر من صفر';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('تاريخ الدين: ${selectedDate.toIso8601String().split('T').first}'),
+                  trailing: const Icon(Icons.calendar_today),
+                  onTap: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: selectedDate,
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime(2100),
+                      locale: const Locale('ar', 'AR'),
+                    );
+                    if (picked != null) setState(() => selectedDate = picked);
+                  },
+                ),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                if (!_formKey.currentState!.validate()) return;
+                final data = {
+                  'employee_id': employeeId,
+                  'amount': num.parse(amountController.text.trim()),
+                  'debt_date': selectedDate.toIso8601String(),
+                };
+                if (initial == null) {
+                  await http.post(
+                    Uri.parse('$_apiUrl/debts'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(data),
+                  );
+                } else {
+                  await http.put(
+                    Uri.parse('$_apiUrl/debts/${initial!['id']}'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(data),
+                  );
+                }
+                Navigator.pop(context);
+                await fetchDataSection();
+              },
+              child: const Text('حفظ'),
+            ),
+          ],
         ),
-        actions: [
-          // Cancel
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء'),
-          ),
-
-          // Save
-          ElevatedButton(
-            onPressed: () async {
-              // 1) Validate all fields
-              if (!_formKey.currentState!.validate()) return;
-
-              // 2) Build payload
-              final data = {
-                'employee_id': employeeId,
-                'amount': num.parse(amountController.text.trim()),
-                'debt_date': selectedDate.toIso8601String(),
-              };
-
-              // 3) Send to backend
-              if (initial == null) {
-                await http.post(
-                  Uri.parse('$_apiUrl/debts'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode(data),
-                );
-              } else {
-                await http.put(
-                  Uri.parse(
-                    '$_apiUrl/debts/${initial!['id']}'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode(data),
-                );
-              }
-
-              // 4) Close dialog and refresh
-              Navigator.pop(context);
-              await fetchDataSection();
-            },
-            child: const Text('حفظ'),
-          ),
-        ],
       ),
-    ),
-  );
-}
+    );
+  }
 
   Future<void> deleteDebt(int id) async {
     await http.delete(Uri.parse('$_apiUrl/debts/$id'));
@@ -1185,53 +1121,52 @@ Future<void> _fetchAvailableDays() async {
               : filtered.isEmpty
                   ? const Center(child: Text('لا يوجد عمال هنا'))
                   : Center(
-                      child:Align(
-            alignment: Alignment.topCenter,
-            child: Scrollbar(
-                        controller: infoTableController,
-                        thumbVisibility: true,
-                        child: SingleChildScrollView(
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: Scrollbar(
                           controller: infoTableController,
-                          scrollDirection: Axis.vertical,
+                          thumbVisibility: true,
                           child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: DataTable(
-                              headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
-                              columns: [
-                                const DataColumn(label: Text('الاسم الكامل', style: TextStyle(color: Colors.white))),
-                                const DataColumn(label: Text('الجوال', style: TextStyle(color: Colors.white))),
-                                const DataColumn(label: Text('العنوان', style: TextStyle(color: Colors.white))),
-                                if (selectedInfoTab == 0)
-                                  const DataColumn(label: Text('الراتب', style: TextStyle(color: Colors.white))),
-                                // if (selectedInfoTab == 0)
-                                const DataColumn(label: Text('ساعات العمل', style: TextStyle(color: Colors.white))),
-                                const DataColumn(label: Text('إجراءات', style: TextStyle(color: Colors.white))),
-                              ],
-                              rows: filtered.map<DataRow>((emp) {
-                                return DataRow(cells: [
-                                  DataCell(Text('${emp['first_name']} ${emp['last_name']}')),
-                                  DataCell(Text(emp['phone'] ?? '')),
-                                  DataCell(Text(emp['address'] ?? '')),
-                                  if (selectedInfoTab == 0) DataCell(Text(emp['salary']?.toString() ?? '')),
-                                //   if (selectedInfoTab == 0) 
-                                  DataCell(Text(emp['shift_hours']?.toString() ?? '')),
-                                  DataCell(Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary),
-                                        onPressed: () => addOrEditEmployee(initial: emp),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete, color: Colors.red),
-                                        onPressed: () => deleteEmployee(emp['id']),
-                                      ),
-                                    ],
-                                  )),
-                                ]);
-                              }).toList(),
+                            controller: infoTableController,
+                            scrollDirection: Axis.vertical,
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: DataTable(
+                                headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
+                                columns: [
+                                  const DataColumn(label: Text('الاسم الكامل', style: TextStyle(color: Colors.white))),
+                                  const DataColumn(label: Text('الجوال', style: TextStyle(color: Colors.white))),
+                                  const DataColumn(label: Text('العنوان', style: TextStyle(color: Colors.white))),
+                                  if (selectedInfoTab == 0)
+                                    const DataColumn(label: Text('الراتب', style: TextStyle(color: Colors.white))),
+                                  const DataColumn(label: Text('ساعات العمل', style: TextStyle(color: Colors.white))),
+                                  const DataColumn(label: Text('إجراءات', style: TextStyle(color: Colors.white))),
+                                ],
+                                rows: filtered.map<DataRow>((emp) {
+                                  return DataRow(cells: [
+                                    DataCell(Text('${emp['first_name']} ${emp['last_name']}')),
+                                    DataCell(Text(emp['phone'] ?? '')),
+                                    DataCell(Text(emp['address'] ?? '')),
+                                    if (selectedInfoTab == 0) DataCell(Text(emp['salary']?.toString() ?? '')),
+                                    DataCell(Text(emp['shift_hours']?.toString() ?? '')),
+                                    DataCell(Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary),
+                                          onPressed: () => addOrEditEmployee(initial: emp),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete, color: Colors.red),
+                                          onPressed: () => deleteEmployee(emp['id']),
+                                        ),
+                                      ],
+                                    )),
+                                  ]);
+                                }).toList(),
+                              ),
                             ),
-                          ),),
+                          ),
                         ),
                       ),
                     ),
@@ -1421,9 +1356,12 @@ Future<void> _fetchAvailableDays() async {
                   color: selectedDataTab == i ? Colors.white : Theme.of(context).colorScheme.onSurface,
                   fontWeight: FontWeight.bold,
                 ),
-                onSelected: (_) {
+                onSelected: (_) async {
                   setState(() => selectedDataTab = i);
-                  if (i == 3) fetchPresence();
+                  if (i == 3) {
+                    await _fetchPresenceDays();
+                    await fetchPresence();
+                  }
                 },
               ),
             );
@@ -1475,54 +1413,55 @@ Future<void> _fetchAvailableDays() async {
         ),
         const SizedBox(height: 16),
         Expanded(
-          child:Align(
+          child: Align(
             alignment: Alignment.topCenter,
             child: Center(
-            child:Align(
-            alignment: Alignment.topCenter,
-            child: Scrollbar(
-              controller: loansTableController,
-              thumbVisibility: true,
-              child: SingleChildScrollView(
-                controller: loansTableController,
-                scrollDirection: Axis.vertical,
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: DataTable(
-                    headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
-                    columns: const [
-                      DataColumn(label: Text('العامل', style: TextStyle(color: Colors.white))),
-                      DataColumn(label: Text('المبلغ', style: TextStyle(color: Colors.white))),
-                      DataColumn(label: Text('المدة (شهور)', style: TextStyle(color: Colors.white))),
-                      DataColumn(label: Text('التاريخ', style: TextStyle(color: Colors.white))),
-                      DataColumn(label: Text('خيارات', style: TextStyle(color: Colors.white))),
-                    ],
-                    rows: _filteredLoans.map((loan) {
-                      return DataRow(cells: [
-                        DataCell(Text(loan['employee_name'] ?? '')),
-                        DataCell(Text(loan['amount'].toString())),
-                        DataCell(Text('${loan['duration_months'] ?? 1}')),
-                        DataCell(Text(loan['loan_date']?.substring(0, 10) ?? '')),
-                        DataCell(Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary),
-                              onPressed: () => addOrEditLoan(initial: loan),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => deleteLoan(loan['id']),
-                            ),
-                          ],
-                        )),
-                      ]);
-                    }).toList(),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: Scrollbar(
+                  controller: loansTableController,
+                  thumbVisibility: true,
+                  child: SingleChildScrollView(
+                    controller: loansTableController,
+                    scrollDirection: Axis.vertical,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
+                        columns: const [
+                          DataColumn(label: Text('العامل', style: TextStyle(color: Colors.white))),
+                          DataColumn(label: Text('المبلغ', style: TextStyle(color: Colors.white))),
+                          DataColumn(label: Text('المدة (شهور)', style: TextStyle(color: Colors.white))),
+                          DataColumn(label: Text('التاريخ', style: TextStyle(color: Colors.white))),
+                          DataColumn(label: Text('خيارات', style: TextStyle(color: Colors.white))),
+                        ],
+                        rows: _filteredLoans.map((loan) {
+                          return DataRow(cells: [
+                            DataCell(Text(loan['employee_name'] ?? '')),
+                            DataCell(Text(loan['amount'].toString())),
+                            DataCell(Text('${loan['duration_months'] ?? 1}')),
+                            DataCell(Text(loan['loan_date']?.substring(0, 10) ?? '')),
+                            DataCell(Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary),
+                                  onPressed: () => addOrEditLoan(initial: loan),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete, color: Colors.red),
+                                  onPressed: () => deleteLoan(loan['id']),
+                                ),
+                              ],
+                            )),
+                          ]);
+                        }).toList(),
+                      ),
+                    ),
                   ),
-                ),),
+                ),
               ),
             ),
-          ),
           ),
         ),
       ],
@@ -1561,53 +1500,54 @@ Future<void> _fetchAvailableDays() async {
         Expanded(
           child: Align(
             alignment: Alignment.topCenter,
-            child:Center(
-            child:Align(
-            alignment: Alignment.topCenter,
-            child: Scrollbar(
-              controller: piecesTableController,
-              thumbVisibility: true,
-              child: SingleChildScrollView(
-                controller: piecesTableController,
-                scrollDirection: Axis.vertical,
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: DataTable(
-                    headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
-                    columns: const [
-                      DataColumn(label: Text('العامل', style: TextStyle(color: Colors.white))),
-                      DataColumn(label: Text('الموديل', style: TextStyle(color: Colors.white))),
-                      DataColumn(label: Text('الكمية', style: TextStyle(color: Colors.white))),
-                      DataColumn(label: Text('سعر الغرزة', style: TextStyle(color: Colors.white))),
-                      DataColumn(label: Text('التاريخ', style: TextStyle(color: Colors.white))),
-                      DataColumn(label: Text('خيارات', style: TextStyle(color: Colors.white))),
-                    ],
-                    rows: _filteredPieces.map((piece) {
-                      return DataRow(cells: [
-                        DataCell(Text(piece['employee_name'] ?? '')),
-                        DataCell(Text(piece['model_name'] ?? '')),
-                        DataCell(Text(piece['quantity'].toString())),
-                        DataCell(Text(piece['piece_price'].toString())),
-                        DataCell(Text(piece['record_date']?.substring(0, 10) ?? '')),
-                        DataCell(Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary),
-                              onPressed: () => addOrEditPiece(initial: piece),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => deletePiece(piece['id']),
-                            ),
-                          ],
-                        )),
-                      ]);
-                    }).toList(),
+            child: Center(
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: Scrollbar(
+                  controller: piecesTableController,
+                  thumbVisibility: true,
+                  child: SingleChildScrollView(
+                    controller: piecesTableController,
+                    scrollDirection: Axis.vertical,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
+                        columns: const [
+                          DataColumn(label: Text('العامل', style: TextStyle(color: Colors.white))),
+                          DataColumn(label: Text('الموديل', style: TextStyle(color: Colors.white))),
+                          DataColumn(label: Text('الكمية', style: TextStyle(color: Colors.white))),
+                          DataColumn(label: Text('سعر الغرزة', style: TextStyle(color: Colors.white))),
+                          DataColumn(label: Text('التاريخ', style: TextStyle(color: Colors.white))),
+                          DataColumn(label: Text('خيارات', style: TextStyle(color: Colors.white))),
+                        ],
+                        rows: _filteredPieces.map((piece) {
+                          return DataRow(cells: [
+                            DataCell(Text(piece['employee_name'] ?? '')),
+                            DataCell(Text(piece['model_name'] ?? '')),
+                            DataCell(Text(piece['quantity'].toString())),
+                            DataCell(Text(piece['piece_price'].toString())),
+                            DataCell(Text(piece['record_date']?.substring(0, 10) ?? '')),
+                            DataCell(Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: Icon(Icons.edit, color: Theme.of(context).colorScheme.primary),
+                                  onPressed: () => addOrEditPiece(initial: piece),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete, color: Colors.red),
+                                  onPressed: () => deletePiece(piece['id']),
+                                ),
+                              ],
+                            )),
+                          ]);
+                        }).toList(),
+                      ),
+                    ),
                   ),
                 ),
-              ),),
-            ),
+              ),
             ),
           ),
         ),
@@ -1764,11 +1704,11 @@ Future<void> _fetchAvailableDays() async {
                 onChanged: (y) async {
                   setState(() {
                     selectedYear = y;
-                    selectedDay = null; // Reset selected day
+                    selectedDay = null;
                   });
                   await _fetchAttendanceMonths();
-                  await _fetchAvailableDays(); // Fetch available days after changing year
-                  fetchPresence(); // Fetch presence after year change
+                  await _fetchPresenceDays();
+                  await fetchPresence();
                 },
               ),
               const SizedBox(width: 24),
@@ -1782,10 +1722,10 @@ Future<void> _fetchAvailableDays() async {
                 onChanged: (val) async {
                   setState(() {
                     selectedYearMonth = val;
-                    selectedDay = null; // Reset selected day
+                    selectedDay = null;
                   });
-                  await _fetchAvailableDays(); // Fetch available days after changing month
-                  fetchPresence(); // Fetch presence after month change
+                  await _fetchPresenceDays();
+                  await fetchPresence();
                 },
               ),
               const SizedBox(width: 24),
@@ -1794,18 +1734,18 @@ Future<void> _fetchAvailableDays() async {
               DropdownButton<int?>(
                 value: selectedDay,
                 items: [
-                    const DropdownMenuItem<int?>(
-                      value: null,
-                      child: Text('الكل'),
-                    ),
-                    ..._availableDays.map((d) => DropdownMenuItem<int?>(
-                      value: d,
-                      child: Text(d.toString()),
-                    )),
+                  const DropdownMenuItem<int?>(
+                    value: null,
+                    child: Text('الكل'),
+                  ),
+                  ..._presenceDays.map((d) => DropdownMenuItem<int?>(
+                        value: d,
+                        child: Text(d.toString()),
+                      )),
                 ],
                 onChanged: (val) {
                   setState(() => selectedDay = val);
-                  fetchPresence(); // Fetch presence when day changes
+                  fetchPresence();
                 },
               ),
             ],
@@ -1884,9 +1824,7 @@ Future<void> _fetchAvailableDays() async {
         ),
       ],
     );
-}
-
-
+  }
 
   Widget _buildSalariesSection(List<String> salariesTabs) {
     return Column(
@@ -1967,40 +1905,41 @@ Future<void> _fetchAvailableDays() async {
   Widget _buildMonthlySalaryTable() {
     if (monthlyTableRows.isEmpty) return const Center(child: Text('لا يوجد بيانات رواتب هنا'));
     return Center(
-      child:Align(
-            alignment: Alignment.topCenter,
-            child: Scrollbar(
-        controller: monthlySalaryTableController,
-        thumbVisibility: true,
-        child: SingleChildScrollView(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Scrollbar(
           controller: monthlySalaryTableController,
-          scrollDirection: Axis.vertical,
+          thumbVisibility: true,
           child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
-              columns: const [
-                DataColumn(label: Text('الاسم الكامل', style: TextStyle(color: Colors.white))),
-                DataColumn(label: Text('الراتب', style: TextStyle(color: Colors.white))),
-                DataColumn(label: Text('مجموع الساعات', style: TextStyle(color: Colors.white))),
-                DataColumn(label: Text('الراتب الفعلي', style: TextStyle(color: Colors.white))),
-                DataColumn(label: Text('دين هذا الشهر', style: TextStyle(color: Colors.white))),
-                DataColumn(label: Text('السلف', style: TextStyle(color: Colors.white))),
-                DataColumn(label: Text('الراتب النهائي', style: TextStyle(color: Colors.white))),
-              ],
-              rows: monthlyTableRows.map<DataRow>((row) {
-                return DataRow(cells: [
-                  DataCell(Text(row['full_name'].toString())),
-                  DataCell(Text(row['salary'].toStringAsFixed(2))),
-                  DataCell(Text(row['total_hours'].toStringAsFixed(2))),
-                  DataCell(Text(row['calculated_salary'].toStringAsFixed(2))),
-                  DataCell(Text(row['monthly_due'].toStringAsFixed(2))),
-                  DataCell(Text(row['debt'].toStringAsFixed(2))),
-                  DataCell(Text(row['final_salary'].toStringAsFixed(2))),
-                ]);
-              }).toList(),
+            controller: monthlySalaryTableController,
+            scrollDirection: Axis.vertical,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
+                columns: const [
+                  DataColumn(label: Text('الاسم الكامل', style: TextStyle(color: Colors.white))),
+                  DataColumn(label: Text('الراتب', style: TextStyle(color: Colors.white))),
+                  DataColumn(label: Text('مجموع الساعات', style: TextStyle(color: Colors.white))),
+                  DataColumn(label: Text('الراتب الفعلي', style: TextStyle(color: Colors.white))),
+                  DataColumn(label: Text('دين هذا الشهر', style: TextStyle(color: Colors.white))),
+                  DataColumn(label: Text('السلف', style: TextStyle(color: Colors.white))),
+                  DataColumn(label: Text('الراتب النهائي', style: TextStyle(color: Colors.white))),
+                ],
+                rows: monthlyTableRows.map<DataRow>((row) {
+                  return DataRow(cells: [
+                    DataCell(Text(row['full_name'].toString())),
+                    DataCell(Text(row['salary'].toStringAsFixed(2))),
+                    DataCell(Text(row['total_hours'].toStringAsFixed(2))),
+                    DataCell(Text(row['calculated_salary'].toStringAsFixed(2))),
+                    DataCell(Text(row['monthly_due'].toStringAsFixed(2))),
+                    DataCell(Text(row['debt'].toStringAsFixed(2))),
+                    DataCell(Text(row['final_salary'].toStringAsFixed(2))),
+                  ]);
+                }).toList(),
+              ),
             ),
-          ),),
+          ),
         ),
       ),
     );
@@ -2009,135 +1948,128 @@ Future<void> _fetchAvailableDays() async {
   Widget _buildPieceSalaryTable() {
     if (pieceTableRows.isEmpty) return const Center(child: Text('لا يوجد بيانات رواتب هنا'));
     return Center(
-      child:  Align(
-            alignment: Alignment.topCenter,
-            child:Scrollbar(
-        controller: pieceSalaryTableController,
-        thumbVisibility: true,
-        child: SingleChildScrollView(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Scrollbar(
           controller: pieceSalaryTableController,
-          scrollDirection: Axis.vertical,
+          thumbVisibility: true,
           child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
-              columns: const [
-                DataColumn(label: Text('الاسم الكامل', style: TextStyle(color: Colors.white))),
-                DataColumn(label: Text('مجموع الغرز', style: TextStyle(color: Colors.white))),
-                DataColumn(label: Text('مجموع الأجر', style: TextStyle(color: Colors.white))),
-                DataColumn(label: Text('دين هذا الشهر', style: TextStyle(color: Colors.white))),
-                DataColumn(label: Text('السلف', style: TextStyle(color: Colors.white))),
-                DataColumn(label: Text('باقي الديون', style: TextStyle(color: Colors.white))),
-                DataColumn(label: Text('الراتب النهائي', style: TextStyle(color: Colors.white))),
-              ],
-              rows: pieceTableRows.map<DataRow>((row) {
-                return DataRow(cells: [
-                  DataCell(Text(row['full_name'])),
-                  DataCell(Text(row['total_qty'].toString())),
-                  DataCell(Text(row['total_salary'].toStringAsFixed(2))),
-                  DataCell(Text(row['monthly_due'].toStringAsFixed(2))),
-                  DataCell(Text(row['debt'].toStringAsFixed(2))),
-                  DataCell(Text(row['remaining_loan'].toStringAsFixed(2))),
-                  DataCell(Text(row['final_salary'].toStringAsFixed(2))),
-                ]);
-              }).toList(),
+            controller: pieceSalaryTableController,
+            scrollDirection: Axis.vertical,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
+                columns: const [
+                  DataColumn(label: Text('الاسم الكامل', style: TextStyle(color: Colors.white))),
+                  DataColumn(label: Text('مجموع الغرز', style: TextStyle(color: Colors.white))),
+                  DataColumn(label: Text('مجموع الأجر', style: TextStyle(color: Colors.white))),
+                  DataColumn(label: Text('دين هذا الشهر', style: TextStyle(color: Colors.white))),
+                  DataColumn(label: Text('السلف', style: TextStyle(color: Colors.white))),
+                  DataColumn(label: Text('باقي الديون', style: TextStyle(color: Colors.white))),
+                  DataColumn(label: Text('الراتب النهائي', style: TextStyle(color: Colors.white))),
+                ],
+                rows: pieceTableRows.map<DataRow>((row) {
+                  return DataRow(cells: [
+                    DataCell(Text(row['full_name'])),
+                    DataCell(Text(row['total_qty'].toString())),
+                    DataCell(Text(row['total_salary'].toStringAsFixed(2))),
+                    DataCell(Text(row['monthly_due'].toStringAsFixed(2))),
+                    DataCell(Text(row['debt'].toStringAsFixed(2))),
+                    DataCell(Text(row['remaining_loan'].toStringAsFixed(2))),
+                    DataCell(Text(row['final_salary'].toStringAsFixed(2))),
+                  ]);
+                }).toList(),
+              ),
             ),
-          ),),
+          ),
         ),
       ),
     );
   }
 
   @override
-Widget build(BuildContext context) {
-  final mainTabs = ['معلومات', 'البيانات', 'ادارة البيانات', 'رواتب العمال'];
-  final infoTabs = ['شهرياً', 'بالغرزة'];
-  final salariesTabs = ['شهرياً', 'بالغرزة'];
+  Widget build(BuildContext context) {
+    final mainTabs = ['معلومات', 'البيانات', 'ادارة البيانات', 'رواتب العمال'];
+    final infoTabs = ['شهرياً', 'بالغرزة'];
+    final salariesTabs = ['شهرياً', 'بالغرزة'];
 
-  return Directionality(
-    textDirection: TextDirection.rtl,
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(mainTabs.length, (i) {
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: ChoiceChip(
-                label: Text(mainTabs[i]),
-                selected: selectedTab == i,
-                selectedColor: Theme.of(context).colorScheme.primary,
-                labelStyle: TextStyle(
-                  color: selectedTab == i
-                      ? Colors.white
-                      : Theme.of(context).colorScheme.onSurface,
-                  fontWeight: FontWeight.bold,
-                ),
-                onSelected: (_) async {
-                  setState(() => selectedTab = i);
-
-                  if (i == 1 && _availableYears.isEmpty) {
-                    await _fetchAttendanceYears();
-                    if (_availableYears.isNotEmpty) {
-                      await fetchAttendance();
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(mainTabs.length, (i) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                child: ChoiceChip(
+                  label: Text(mainTabs[i]),
+                  selected: selectedTab == i,
+                  selectedColor: Theme.of(context).colorScheme.primary,
+                  labelStyle: TextStyle(
+                    color: selectedTab == i
+                        ? Colors.white
+                        : Theme.of(context).colorScheme.onSurface,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  onSelected: (_) async {
+                    setState(() => selectedTab = i);
+                    if (i == 1 && _availableYears.isEmpty) {
+                      await _fetchAttendanceYears();
+                      if (_availableYears.isNotEmpty) {
+                        await fetchAttendance();
+                      }
                     }
-                  }
-
-                  if (i == 2) {
-                    // reload debts, pieces, loans for “ادارة البيانات”
-                    await fetchDataSection();
-                  }
-                },
-              ),
-            );
-          }),
-        ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: selectedTab == 0
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(infoTabs.length, (i) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                          child: ChoiceChip(
-                            label: Text(infoTabs[i]),
-                            selected: selectedInfoTab == i,
-                            selectedColor:
-                                Theme.of(context).colorScheme.primary,
-                            labelStyle: TextStyle(
-                              color: selectedInfoTab == i
-                                  ? Colors.white
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .onSurface,
-                              fontWeight: FontWeight.bold,
+                    if (i == 2) {
+                      await fetchDataSection();
+                    }
+                  },
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: selectedTab == 0
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: List.generate(infoTabs.length, (i) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                            child: ChoiceChip(
+                              label: Text(infoTabs[i]),
+                              selected: selectedInfoTab == i,
+                              selectedColor: Theme.of(context).colorScheme.primary,
+                              labelStyle: TextStyle(
+                                color: selectedInfoTab == i
+                                    ? Colors.white
+                                    : Theme.of(context).colorScheme.onSurface,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              onSelected: (_) => setState(() => selectedInfoTab = i),
                             ),
-                            onSelected: (_) =>
-                                setState(() => selectedInfoTab = i),
-                          ),
-                        );
-                      }),
-                    ),
-                    const SizedBox(height: 16),
-                    Expanded(child: _buildInfoTable()),
-                  ],
-                )
-              : selectedTab == 1
-                  ? _buildAttendanceSection()
-                  : selectedTab == 2
-                      ? _buildDataSection()
-                      : _buildSalariesSection(salariesTabs),
-        ),
-      ],
-    ),
-  );
-}
-
+                          );
+                        }),
+                      ),
+                      const SizedBox(height: 16),
+                      Expanded(child: _buildInfoTable()),
+                    ],
+                  )
+                : selectedTab == 1
+                    ? _buildAttendanceSection()
+                    : selectedTab == 2
+                        ? _buildDataSection()
+                        : _buildSalariesSection(salariesTabs),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _MonthlyAttendanceTable extends StatelessWidget {
@@ -2359,7 +2291,6 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 1. Employee dropdown
             DropdownButtonFormField<int>(
               value: employeeId,
               decoration: const InputDecoration(labelText: 'العامل'),
@@ -2372,10 +2303,7 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
               onChanged: (v) => setState(() => employeeId = v),
               validator: (v) => v == null ? 'مطلوب' : null,
             ),
-
             const SizedBox(height: 8),
-
-            // 2. Date picker
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: Text('التاريخ: ${date.toIso8601String().split('T').first}'),
@@ -2391,10 +2319,7 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
                 if (picked != null) setState(() => date = picked);
               },
             ),
-
             const SizedBox(height: 8),
-
-            // 3. Check‑in time
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: Text('دخول: ${checkIn.format(context)}'),
@@ -2404,10 +2329,7 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
                 if (t != null) setState(() => checkIn = t);
               },
             ),
-
             const SizedBox(height: 8),
-
-            // 4. Check‑out time
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: Text('خروج: ${checkOut.format(context)}'),
@@ -2417,25 +2339,17 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
                 if (t != null) setState(() => checkOut = t);
               },
             ),
-
             const SizedBox(height: 8),
-
-           Builder(
-  builder: (context) {
-    // schedule this to run after the current build frame completes
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      // only call setState if the form is invalid
-      if (!_formKey.currentState!.validate() && mounted) {
-        setState(() {
-          // …your logic here (e.g. flip a flag, show an error message, etc.)…
-        });
-      }
-    });
-    // nothing to render in this slot
-    return const SizedBox.shrink();
-  },
-),
-
+            Builder(
+              builder: (context) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!_formKey.currentState!.validate() && mounted) {
+                    setState(() {});
+                  }
+                });
+                return const SizedBox.shrink();
+              },
+            ),
           ],
         ),
       ),
@@ -2443,10 +2357,7 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
         ElevatedButton(
           onPressed: () {
-            // 1. Validate employee selected
             if (!_formKey.currentState!.validate()) return;
-
-            // 2. Business rule: checkOut after checkIn
             final inDT = DateTime(date.year, date.month, date.day, checkIn.hour, checkIn.minute);
             final outDT = DateTime(date.year, date.month, date.day, checkOut.hour, checkOut.minute);
             if (!outDT.isAfter(inDT)) {
@@ -2458,8 +2369,6 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
               );
               return;
             }
-
-            // 3. Build payload
             final payload = <String, dynamic>{
               'employee_id': employeeId,
               'date': date.toIso8601String().split('T').first,
@@ -2469,8 +2378,6 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
             if (widget.initial != null && widget.initial!['attendance_id'] != null) {
               payload['attendance_id'] = widget.initial!['attendance_id'];
             }
-
-            // 4. Return payload
             Navigator.pop<Map<String, dynamic>>(context, payload);
           },
           child: const Text('حفظ'),
@@ -2479,7 +2386,6 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
     );
   }
 }
-
 
 class EmployeeDialog extends StatefulWidget {
   final Map? initial;
@@ -2602,7 +2508,7 @@ class _EmployeeDialogState extends State<EmployeeDialog> {
                 'address': address.text.trim(),
                 'payment_type': paymentType,
                 'salary': isMonthly ? double.tryParse(salary.text) ?? 0 : null,
-                'shift_hours':  shiftHours,
+                'shift_hours': shiftHours,
                 'photo_url': photoUrl.text.trim().isEmpty ? null : photoUrl.text.trim(),
               });
             }

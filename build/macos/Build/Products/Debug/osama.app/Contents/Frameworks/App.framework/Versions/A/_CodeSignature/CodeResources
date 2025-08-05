@@ -10,11 +10,11 @@
 		</data>
 		<key>Resources/flutter_assets/AssetManifest.bin</key>
 		<data>
-		k0q5HC5P+QgH6ywJN9EKaUueRYU=
+		OHuM0yaf9CuvBKc1LsMWfF+pSUk=
 		</data>
 		<key>Resources/flutter_assets/AssetManifest.json</key>
 		<data>
-		MlONqn5UU2oCUkFlA2iMLJ/u/8k=
+		pNcOCCKZ4PD5vQ+MlQ0aJWR39tA=
 		</data>
 		<key>Resources/flutter_assets/FontManifest.json</key>
 		<data>
@@ -22,7 +22,7 @@
 		</data>
 		<key>Resources/flutter_assets/NOTICES.Z</key>
 		<data>
-		QEmldd5JDGAb46v6rNXf0bgpQSk=
+		lGH8qpo+5p3ux1pxm/Un/2QIiCE=
 		</data>
 		<key>Resources/flutter_assets/NativeAssetsManifest.json</key>
 		<data>
@@ -388,6 +388,10 @@
 		<data>
 		QBWUjf3MBdpsAeiVDcHwm7DMPtA=
 		</data>
+		<key>Resources/flutter_assets/assets/images/new_logo.png</key>
+		<data>
+		MpZOssXmzE6ISgwYNGap9mp69iw=
+		</data>
 		<key>Resources/flutter_assets/fonts/MaterialIcons-Regular.otf</key>
 		<data>
 		/CUoTuPQqqdexfyOT9lpJhV+2MQ=
@@ -398,7 +402,7 @@
 		</data>
 		<key>Resources/flutter_assets/kernel_blob.bin</key>
 		<data>
-		uymmJqMJ7FN6ADYPGpeJ/LRdihU=
+		6aZhrlvKC89W2EIeCkN1ppFrCSs=
 		</data>
 		<key>Resources/flutter_assets/packages/fluent_ui/assets/AcrylicNoise.png</key>
 		<data>
@@ -430,14 +434,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			HEwu7iJkW0OzOrKP3JWrhdNkBQ+BiRun6e3drKc/MAE=
+			518Z8b2tkv7IfkU9p0YOe27znbc+/V0c2zjx2mIyMaQ=
 			</data>
 		</dict>
 		<key>Resources/flutter_assets/AssetManifest.json</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			94Gyp9FjhSkiK3GEVGJIQc8IlX/TFC6yEGETbEw07uE=
+			gMdp6FTiSSLfOjkiw4BdQpPoo9po32GQw/nKyYwwZ1c=
 			</data>
 		</dict>
 		<key>Resources/flutter_assets/FontManifest.json</key>
@@ -451,7 +455,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			2iFXg1dFS3zZrGOm5WqudfGvDsCJJblnj7RcC8pHbT4=
+			OzuX1crR42PhtW0fQz0oMtwcXKmijli8Hb34S2dWK70=
 			</data>
 		</dict>
 		<key>Resources/flutter_assets/NativeAssetsManifest.json</key>
@@ -1091,6 +1095,13 @@
 			hgz7lIFjCwJZqnb712FL2S9QXbmWvymWfdn0rFJR5kI=
 			</data>
 		</dict>
+		<key>Resources/flutter_assets/assets/images/new_logo.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			vgb9DnGwCaYE88ADXsjx+Q6IeDqTu5/QecFGe3nGo1Y=
+			</data>
+		</dict>
 		<key>Resources/flutter_assets/fonts/MaterialIcons-Regular.otf</key>
 		<dict>
 			<key>hash2</key>
@@ -1109,7 +1120,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			yb0AYft6jq9pXD91gDO4Ud3HfQ08YyaCNKbbqZapPTI=
+			QT22qeKxGOamdDVbzdEpTnQN/cb336QzVzu4wdaIAi8=
 			</data>
 		</dict>
 		<key>Resources/flutter_assets/packages/fluent_ui/assets/AcrylicNoise.png</key>

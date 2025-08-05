@@ -7,6 +7,7 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:postgres/postgres.dart';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:dart_jsonwebtoken/dart_jsonwebtoken.dart';
+import 'package:shelf_static/shelf_static.dart';
 
 // Domain route imports
 import 'routes/clients_api.dart';
@@ -550,11 +551,25 @@ Future<void> main() async {
   router.mount('/embrodry/warehouse',   apiPipeline.addHandler(getEmbrodryWarehouseRoutes(db)));
     ;
 
-  final handler = Pipeline()
-    .addMiddleware(logRequests())
-    .addMiddleware(corsHeaders())
-    .addMiddleware(securityHeaders())
-    .addHandler(router);
+  // 1) Static handler: serve any files in public/images/ at /images/*
+ final staticHandler = createStaticHandler(
+   'public',
+   serveFilesOutsidePath: true,
+ );
+
+// 2) Cascade: try static files first, then your router
+final cascadeHandler = Cascade()
+  .add(staticHandler)   // GET /images/foo.png → public/images/foo.png
+  .add(router)          // everything else → your API
+  .handler;
+
+// 3) Pipeline remains the same, but point at cascadeHandler
+final handler = Pipeline()
+  .addMiddleware(logRequests())
+  .addMiddleware(corsHeaders())
+  .addMiddleware(securityHeaders())
+  .addHandler(cascadeHandler);
+
 
   try {
     final server = await serve(handler, InternetAddress.anyIPv4, serverPort);

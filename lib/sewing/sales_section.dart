@@ -5,6 +5,10 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../main.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
+import 'package:pdf/pdf.dart';
+import 'dart:io' as io;
 
 /// =============================================================
 /// Shared / Common Widgets & Helpers
@@ -179,7 +183,7 @@ class SewingSalesSection extends StatefulWidget {
 class _SewingSalesSectionState extends State<SewingSalesSection> {
   int selectedTab = 2;
 
-String get baseUrl => '${globalServerUri.toString()}/sales';
+  String get baseUrl => '${globalServerUri.toString()}/sales';
 
   List<dynamic> allModels = [];
   List<dynamic> allClients = [];
@@ -352,6 +356,29 @@ String get baseUrl => '${globalServerUri.toString()}/sales';
     ]);
   }
 
+  void _showModelImagePopup(String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(16),
+        child: InteractiveViewer(
+          child: Image.network(
+            '${globalServerUri.toString()}$imageUrl',
+            fit: BoxFit.contain,
+            loadingBuilder: (ctx, child, progress) {
+              if (progress == null) return child;
+              return const Center(child: CircularProgressIndicator());
+            },
+            errorBuilder: (ctx, err, st) => const Center(
+              child: Icon(Icons.broken_image, size: 64),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _addNewFacture() async {
     int? clientId;
     String payType = 'debt';
@@ -377,12 +404,16 @@ String get baseUrl => '${globalServerUri.toString()}/sales';
       int? modelId;
       final qtyCtrl = TextEditingController();
       final priceCtrl = TextEditingController();
+      String? searchQuery;
 
-      final List<dynamic> inStockModels = allModels.where((m) {
-        final q = m['available_quantity'];
-        final qty = q is num ? q.toInt() : int.tryParse(q.toString()) ?? 0;
-        return qty > 0;
-      }).toList();
+      final List<Map<String, dynamic>> inStockModels = allModels
+          .where((m) {
+            final q = m['available_quantity'];
+            final qty = q is num ? q.toInt() : int.tryParse(q.toString()) ?? 0;
+            return qty > 0;
+          })
+          .cast<Map<String, dynamic>>()
+          .toList();
 
       if (inStockModels.isEmpty) {
         _showSnackBar('لا توجد منتجات متاحة في المخزن حالياً', color: Colors.orange);
@@ -398,18 +429,106 @@ String get baseUrl => '${globalServerUri.toString()}/sales';
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  DropdownButtonFormField<int>(
-                    decoration: const InputDecoration(labelText: 'اختر المنتج'),
-                    value: modelId,
-                    items: inStockModels.map((m) {
-                      return DropdownMenuItem<int>(
-                        value: m['id'] as int,
-                        child: Text(
-                          '${m['name']} (متاح: ${m['available_quantity']}${role == "Admin" || role == "SuperAdmin" ? ", تكلفة: ${m['cost_price']}" : ""})',
+                  Autocomplete<Map<String, dynamic>>(
+                    optionsBuilder: (TextEditingValue textEditingValue) {
+                      searchQuery = textEditingValue.text.toLowerCase();
+                      return inStockModels.where((m) {
+                        final name = m['name'].toString().toLowerCase();
+                        return name.contains(searchQuery!);
+                      });
+                    },
+                    displayStringForOption: (option) =>
+                        '${option['name']} (متاح: ${option['available_quantity']}${role == "Admin" || role == "SuperAdmin" ? ", تكلفة: ${option['cost_price']}" : ""})',
+                    fieldViewBuilder: (
+                      BuildContext context,
+                      TextEditingController textEditingController,
+                      FocusNode focusNode,
+                      VoidCallback onFieldSubmitted,
+                    ) {
+                      return TextField(
+                        controller: textEditingController,
+                        focusNode: focusNode,
+                        decoration: InputDecoration(
+                          labelText: 'اختر المنتج',
+                          suffixIcon: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (textEditingController.text.isNotEmpty)
+                                IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    textEditingController.clear();
+                                    st(() => modelId = null);
+                                  },
+                                ),
+                              if (modelId != null)
+                                IconButton(
+                                  icon: const Icon(Icons.image, color: Colors.blue),
+                                  onPressed: () {
+                                    final selectedModel = inStockModels
+                                        .firstWhere((m) => m['id'] == modelId);
+                                    final imageUrl = selectedModel['image_url'] as String?;
+                                    if (imageUrl != null && imageUrl.isNotEmpty) {
+                                      _showModelImagePopup(imageUrl);
+                                    } else {
+                                      _showSnackBar('لا توجد صورة لهذا الموديل');
+                                    }
+                                  },
+                                ),
+                            ],
+                          ),
                         ),
                       );
-                    }).toList(),
-                    onChanged: (v) => st(() => modelId = v),
+                    },
+                    onSelected: (Map<String, dynamic> option) {
+                      st(() => modelId = option['id'] as int);
+                    },
+                    optionsViewBuilder: (
+                      BuildContext context,
+                      AutocompleteOnSelected<Map<String, dynamic>> onSelected,
+                      Iterable<Map<String, dynamic>> options,
+                    ) {
+                      return Align(
+                        alignment: Alignment.topRight,
+                        child: Material(
+                          elevation: 4.0,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
+                            child: ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: options.length,
+                              itemBuilder: (BuildContext context, int index) {
+                                final option = options.elementAt(index);
+                                final imageUrl = option['image_url'] as String?;
+                                return GestureDetector(
+                                  onTap: () => onSelected(option),
+                                  child: ListTile(
+                                    leading: (imageUrl != null && imageUrl.isNotEmpty)
+                                        ? GestureDetector(
+                                            onTap: () => _showModelImagePopup(imageUrl),
+                                            child: ClipRRect(
+                                              borderRadius: BorderRadius.circular(4),
+                                              child: Image.network(
+                                                '${globalServerUri.toString()}$imageUrl',
+                                                width: 40,
+                                                height: 40,
+                                                fit: BoxFit.cover,
+                                                errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported),
+                                              ),
+                                            ),
+                                          )
+                                        : const Icon(Icons.image, size: 40, color: Colors.grey),
+                                    title: Text(
+                                      '${option['name']} (متاح: ${option['available_quantity']}${role == "Admin" || role == "SuperAdmin" ? ", تكلفة: ${option['cost_price']}" : ""})',
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                   const SizedBox(height: 16),
                   TextField(
@@ -421,8 +540,7 @@ String get baseUrl => '${globalServerUri.toString()}/sales';
                   TextField(
                     controller: priceCtrl,
                     decoration: const InputDecoration(labelText: 'سعر البيع'),
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   ),
                 ],
               ),
@@ -474,6 +592,7 @@ String get baseUrl => '${globalServerUri.toString()}/sales';
                       'unit_price': p,
                       'available_quantity': availableQty,
                       'cost_price': prod['cost_price'],
+                      'image_url': prod['image_url'],
                     });
                   }
 
@@ -546,7 +665,7 @@ String get baseUrl => '${globalServerUri.toString()}/sales';
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
                           clientError,
-                          style: TextStyle(color: Colors.red),
+                          style: const TextStyle(color: Colors.red),
                         ),
                       ),
                     const SizedBox(height: 16),
@@ -590,7 +709,23 @@ String get baseUrl => '${globalServerUri.toString()}/sales';
                                 final it = e.value;
                                 final profit =
                                     (it['unit_price'] - it['cost_price']) * it['quantity'];
+                                final imageUrl = it['image_url'] as String?;
                                 return ListTile(
+                                  leading: (imageUrl != null && imageUrl.isNotEmpty)
+                                      ? GestureDetector(
+                                          onTap: () => _showModelImagePopup(imageUrl),
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(4),
+                                            child: Image.network(
+                                              '${globalServerUri.toString()}$imageUrl',
+                                              width: 40,
+                                              height: 40,
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported),
+                                            ),
+                                          ),
+                                        )
+                                      : const Icon(Icons.image, size: 40, color: Colors.grey),
                                   title: Text(it['model_name']),
                                   subtitle: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -627,12 +762,12 @@ String get baseUrl => '${globalServerUri.toString()}/sales';
                               padding: const EdgeInsets.only(bottom: 8),
                               child: Text(
                                 productsError,
-                                style: TextStyle(color: Colors.red),
+                                style: const TextStyle(color: Colors.red),
                               ),
                             ),
                           Row(
                             children: [
-                              Text('عدد المنتجات: 0'),
+                              const Text('عدد المنتجات: 0'),
                               const Spacer(),
                               ElevatedButton.icon(
                                 icon: const Icon(Icons.add),
@@ -865,198 +1000,121 @@ String get baseUrl => '${globalServerUri.toString()}/sales';
   }
 
   Future<void> _printFacture(Map<String, dynamic> facture) async {
-    final pdf = pw.Document();
-    final font = await PdfGoogleFonts.cairoRegular();
+  // Load custom Arabic font
+  final fontData = await rootBundle.load('assets/fonts/NotoSansArabic_Condensed-Black.ttf');
+  final arabicFont = pw.Font.ttf(fontData);
 
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        build: (pw.Context ctx) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Text(
-              'فاتورة رقم ${facture['id']}',
-              style: pw.TextStyle(
-                font: font,
-                fontSize: 24,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-            pw.SizedBox(height: 20),
-            pw.Text(
-              'التاريخ: ${fmtDate(facture['facture_date'])}',
-              style: pw.TextStyle(font: font, fontSize: 16),
-            ),
-            pw.Text(
-              'العميل: ${facture['client_name']}',
-              style: pw.TextStyle(font: font, fontSize: 16),
-            ),
-            pw.Text(
-              'الهاتف: ${facture['client_phone']}',
-              style: pw.TextStyle(font: font, fontSize: 16),
-            ),
-            pw.Text(
-              'العنوان: ${facture['client_address']}',
-              style: pw.TextStyle(font: font, fontSize: 16),
-            ),
-            pw.SizedBox(height: 20),
-            pw.Text(
-              'تفاصيل المنتجات',
-              style: pw.TextStyle(
-                font: font,
-                fontSize: 18,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-            pw.SizedBox(height: 10),
-            pw.Table(
-              border: pw.TableBorder.all(),
-              children: [
-                pw.TableRow(
-                  children: [
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(8),
-                      child: pw.Text('المنتج', style: pw.TextStyle(font: font)),
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(8),
-                      child: pw.Text('الكمية', style: pw.TextStyle(font: font)),
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(8),
-                      child: pw.Text('سعر البيع', style: pw.TextStyle(font: font)),
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(8),
-                      child: pw.Text('الإجمالي', style: pw.TextStyle(font: font)),
-                    ),
-                  ],
-                ),
-                ...(facture['items'] as List<dynamic>).map((it) {
-                  return pw.TableRow(
-                    children: [
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text(
-                            it['model_name']?.toString() ?? '',
-                            style: pw.TextStyle(font: font)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text(
-                            it['quantity']?.toString() ?? '0',
-                            style: pw.TextStyle(font: font)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text(
-                            '${(it['unit_price'] as num?)?.toStringAsFixed(2) ?? '0'} دج',
-                            style: pw.TextStyle(font: font)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text(
-                            '${(it['line_total'] as num?)?.toStringAsFixed(2) ?? '0'} دج',
-                            style: pw.TextStyle(font: font)),
-                      ),
-                    ],
-                  );
-                }).toList(),
-              ],
-            ),
-            pw.SizedBox(height: 20),
-            pw.Text(
-              'الإجمالي: ${(facture['total_amount'] as num?)?.toStringAsFixed(2) ?? '0'} دج',
-              style: pw.TextStyle(
-                font: font,
-                fontSize: 16,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-            pw.Text(
-              'المدفوع: ${(facture['total_paid'] as num?)?.toStringAsFixed(2) ?? '0'} دج',
-              style: pw.TextStyle(font: font, fontSize: 16),
-            ),
-            pw.Text(
-              'المتبقي: ${(facture['remaining_amount'] as num?)?.toStringAsFixed(2) ?? '0'} دج',
-              style: pw.TextStyle(font: font, fontSize: 16),
-            ),
-            if ((facture['returns'] as List<dynamic>).isNotEmpty) ...[
-              pw.SizedBox(height: 20),
+  final pdf = pw.Document();
+
+  // Invoice header and client info
+  pdf.addPage(
+    pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      build: (context) => [
+        pw.Directionality(
+          textDirection: pw.TextDirection.rtl,
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            children: [
+              // Title
               pw.Text(
-                'المرتجعات',
-                style: pw.TextStyle(
-                  font: font,
-                  fontSize: 18,
-                  fontWeight: pw.FontWeight.bold,
-                ),
+                'فاتورة رقم ${facture['id']}',
+                style: pw.TextStyle(font: arabicFont, fontSize: 24, fontWeight: pw.FontWeight.bold),
               ),
-              pw.SizedBox(height: 10),
-              pw.Table(
-                border: pw.TableBorder.all(),
+              pw.SizedBox(height: 8),
+              // Invoice meta
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  pw.TableRow(
-                    children: [
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('المنتج', style: pw.TextStyle(font: font)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('الكمية', style: pw.TextStyle(font: font)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('تاريخ الإرجاع', style: pw.TextStyle(font: font)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('ملاحظات', style: pw.TextStyle(font: font)),
-                      ),
-                    ],
-                  ),
-                  ...(facture['returns'] as List<dynamic>).map((r) {
-                    return pw.TableRow(
-                      children: [
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                              r['model_name']?.toString() ?? '',
-                              style: pw.TextStyle(font: font)),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                              r['quantity']?.toString() ?? '0',
-                              style: pw.TextStyle(font: font)),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                              fmtDate(r['return_date']),
-                              style: pw.TextStyle(font: font)),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                              r['notes']?.toString() ?? '',
-                              style: pw.TextStyle(font: font)),
-                        ),
-                      ],
-                    );
-                  }).toList(),
+                  pw.Text('التاريخ: ${fmtDate(facture['facture_date'])}', style: pw.TextStyle(font: arabicFont, fontSize: 12)),
+                  pw.Text('عميل: ${facture['client_name']}', style: pw.TextStyle(font: arabicFont, fontSize: 12)),
                 ],
               ),
-            ],
-          ],
-        ),
-      ),
-    );
+              pw.Text('جوال: ${facture['client_phone']}', style: pw.TextStyle(font: arabicFont, fontSize: 12)),
+              pw.Text('العنوان: ${facture['client_address']}', style: pw.TextStyle(font: arabicFont, fontSize: 12)),
+              pw.Divider(),
 
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => pdf.save(),
-    );
-  }
+              // Products table
+              pw.Text('تفاصيل المنتجات', style: pw.TextStyle(font: arabicFont, fontSize: 18, fontWeight: pw.FontWeight.bold)),
+              pw.SizedBox(height: 6),
+              pw.Table.fromTextArray(
+                context: context,
+                headers: ['المنتج', 'الكمية', 'سعر الوحدة', 'الإجمالي'],
+                data: (facture['items'] as List<dynamic>).map<List<String>>((it) {
+                  return [
+                    it['model_name'].toString(),
+                    it['quantity'].toString(),
+                    '${(it['unit_price'] as num).toStringAsFixed(2)} دج',
+                    '${(it['line_total'] as num).toStringAsFixed(2)} دج',
+                  ];
+                }).toList(),
+                headerStyle: pw.TextStyle(font: arabicFont, fontWeight: pw.FontWeight.bold, fontSize: 12),
+                cellStyle: pw.TextStyle(font: arabicFont, fontSize: 10),
+                cellAlignment: pw.Alignment.centerRight,
+                headerDecoration: pw.BoxDecoration(color: PdfColors.grey300),
+                border: pw.TableBorder.all(width: 0.5),
+              ),
+              pw.Divider(),
+
+              // Totals and payments
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.Text('الإجمالي: ${(facture['total_amount'] as num).toStringAsFixed(2)} دج', style: pw.TextStyle(font: arabicFont, fontSize: 12)),
+                      pw.Text('المدفوع: ${(facture['total_paid'] as num).toStringAsFixed(2)} دج', style: pw.TextStyle(font: arabicFont, fontSize: 12)),
+                      pw.Text('المتبقي: ${(facture['remaining_amount'] as num).toStringAsFixed(2)} دج', style: pw.TextStyle(font: arabicFont, fontSize: 12)),
+                    ],
+                  ),
+                  // Signature placeholders
+                  pw.Column(
+                    children: [
+                      pw.Text('المحاسب القديم', style: pw.TextStyle(font: arabicFont, fontSize: 12)),
+                      pw.SizedBox(height: 24),
+                      pw.Text('المحاسب الختامي', style: pw.TextStyle(font: arabicFont, fontSize: 12)),
+                    ],
+                  ),
+                ],
+              ),
+
+              // Payments detail if present
+              if ((facture['payments'] as List<dynamic>?)?.isNotEmpty ?? false) ...[
+                pw.SizedBox(height: 12),
+                pw.Text('سجل الدفعات', style: pw.TextStyle(font: arabicFont, fontSize: 16, fontWeight: pw.FontWeight.bold)),
+                pw.SizedBox(height: 6),
+                pw.Table.fromTextArray(
+                  context: context,
+                  headers: ['التاريخ', 'المبلغ'],
+                  data: (facture['payments'] as List<dynamic>).map<List<String>>((p) {
+                    return [
+                      fmtDate(p['payment_date'].toString()),
+                      '${(p['amount_paid'] as num).toStringAsFixed(2)} دج',
+                    ];
+                  }).toList(),
+                  headerStyle: pw.TextStyle(font: arabicFont, fontWeight: pw.FontWeight.bold, fontSize: 12),
+                  cellStyle: pw.TextStyle(font: arabicFont, fontSize: 10),
+                  cellAlignment: pw.Alignment.centerRight,
+                  border: pw.TableBorder.all(width: 0.5),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  final bytes = await pdf.save();
+  // Desktop: choose directory and save
+    final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'اختر مجلد الحفظ');
+    if (dir != null) {
+      final path = '$dir/فاتورة_${facture['id']}.pdf';
+      await io.File(path).writeAsBytes(bytes);
+    }
+  
+}
 
   @override
   Widget build(BuildContext context) {
@@ -1416,6 +1474,7 @@ String get baseUrl => '${globalServerUri.toString()}/sales';
                                                         fontWeight:
                                                             FontWeight.bold),
                                                 columns: [
+                                                  const DataColumn(label: Text('صورة')),
                                                   const DataColumn(label: Text('المنتج')),
                                                   const DataColumn(label: Text('الكمية')),
                                                   const DataColumn(label: Text('سعر البيع')),
@@ -1427,7 +1486,27 @@ String get baseUrl => '${globalServerUri.toString()}/sales';
                                                 ],
                                                 rows: (d['items'] as List<dynamic>).map<DataRow>((it) {
                                                   final totalProfit = (it['profit_per_piece'] ?? 0) * (it['quantity'] ?? 0);
+                                                  final imageUrl = it['image_url'] as String?;
+                                  leading: (imageUrl != null && imageUrl.isNotEmpty);
+
                                                   return DataRow(cells: [
+                                                    
+                                                    DataCell(
+                      GestureDetector(
+                                            onTap: () => _showModelImagePopup(it['image_url']),
+                                            child: ClipRRect(
+                                              borderRadius: BorderRadius.circular(4),
+                                              child: Image.network(
+                                                '${globalServerUri.toString()}$imageUrl',
+                                                width: 40,
+                                                height: 40,
+                                                fit: BoxFit.cover,
+                                                errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported),
+                                              ),
+                                            ),
+                                          )
+                                          
+                    ),
                                                     DataCell(Text(it['model_name'] ?? '')),
                                                     DataCell(Text('${it['quantity'] ?? 0}')),
                                                     DataCell(Text(
@@ -1618,11 +1697,27 @@ String get baseUrl => '${globalServerUri.toString()}/sales';
                         itemBuilder: (_, i) {
                           final m = allModels[i];
                           final isSel = m['id'] == selectedModelId;
+                          final imageUrl = m['image_url'] as String?;
                           return Card(
                             margin: const EdgeInsets.symmetric(vertical: 4),
                             elevation: isSel ? 4 : 1,
                             color: isSel ? Colors.grey[100] : Colors.white,
                             child: ListTile(
+                              leading: (imageUrl != null && imageUrl.isNotEmpty)
+                                  ? GestureDetector(
+                                      onTap: () => _showModelImagePopup(imageUrl),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.network(
+                                          '${globalServerUri.toString()}$imageUrl',
+                                          width: 40,
+                                          height: 40,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) => const Icon(Icons.broken_image),
+                                        ),
+                                      ),
+                                    )
+                                  : const Icon(Icons.image, size: 40, color: Colors.grey),
                               selected: isSel,
                               title: Text(
                                 m['name'],
@@ -1824,7 +1919,7 @@ class _ModelBuyersPanelState extends State<ModelBuyersPanel> {
     });
     try {
       final resp = await http.get(Uri.parse(
-          'http://localhost:8888/sales/models/${widget.modelId}/clients'));
+          '${globalServerUri.toString()}/sales/models/${widget.modelId}/clients'));
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as List;
         if (widget.seasonId == null) {
@@ -1999,6 +2094,8 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
   List<dynamic> clientFactures = [];
   List<dynamic> clientTransactions = [];
   Set<int> expandedFactureIds = {};
+late pw.Font _arabicFont;
+  late pw.Font _latinFont;
 
   bool loadingFactures = false;
   bool loadingTransactions = false;
@@ -2011,6 +2108,8 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
   void initState() {
     super.initState();
     role = widget.role;
+     _loadPdfFonts();
+
     _fetchFactures();
     _fetchTransactions();
   }
@@ -2025,7 +2124,14 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
       expandedFactureIds.clear();
     }
   }
-
+  Future<void> _loadPdfFonts() async {
+    // Arabic (from your assets)
+    final arabicData = await rootBundle.load('assets/fonts/NotoSansArabic_Condensed-Black.ttf');
+    _arabicFont = pw.Font.ttf(arabicData);
+    // Latin fallback (you already have Roboto_Condensed-Black.ttf)
+    final latinData = await rootBundle.load('assets/fonts/Roboto_Condensed-Black.ttf');
+    _latinFont = pw.Font.ttf(latinData);
+  }
   Future<void> _fetchFactures() async {
     setState(() {
       loadingFactures = true;
@@ -2033,7 +2139,7 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
     });
     try {
       String url =
-          'http://localhost:8888/sales/clients/${widget.clientId}/factures';
+          '${globalServerUri.toString()}/sales/clients/${widget.clientId}/factures';
       final resp = await http.get(Uri.parse(url));
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body) as List;
@@ -2051,7 +2157,7 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
     });
     try {
       String url =
-          'http://localhost:8888/sales/clients/${widget.clientId}/transactions';
+          '${globalServerUri.toString()}/sales/clients/${widget.clientId}/transactions';
       if (startDate != null && endDate != null) {
         final start = startDate!.toIso8601String().split('T')[0];
         final end = endDate!.toIso8601String().split('T')[0];
@@ -2085,82 +2191,168 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
     }
   }
 
-  Future<void> _printTransactions() async {
-    if (clientTransactions.isEmpty) return;
 
-    final pdf = pw.Document();
+Future<void> _printTransactions() async {
+  if (clientTransactions.isEmpty) return;
 
-    String clientName = 'عميل غير معروف';
-    if (clientTransactions.isNotEmpty) {
-      try {
-        final clientResp = await http.get(
-            Uri.parse('http://localhost:8888/sales/clients'));
-        if (clientResp.statusCode == 200) {
-          final clients = jsonDecode(clientResp.body) as List;
-          final client = clients.firstWhere(
-            (c) => c['id'] == widget.clientId,
-            orElse: () => null,
-          );
-          if (client != null) {
-            clientName = client['full_name'];
-          }
-        }
-      } catch (e) {
-        print('Error fetching client info: $e');
-      }
+  // 1. Create PDF document
+  final pdf = pw.Document();
+
+  // 2. Load fonts from assets
+  final arabicData = await rootBundle.load('assets/fonts/NotoSansArabic_Condensed-Black.ttf');
+  final arabicFont = pw.Font.ttf(arabicData);
+  final latinData = await rootBundle.load('assets/fonts/Roboto_Condensed-Black.ttf');
+  final latinFont = pw.Font.ttf(latinData);
+
+  // 3. Fetch client name
+  String clientName = 'عميل غير معروف';
+  try {
+    final resp = await http.get(Uri.parse('${globalServerUri}/sales/clients'));
+    if (resp.statusCode == 200) {
+      final clients = jsonDecode(resp.body) as List;
+      final c = clients.firstWhere(
+        (c) => c['id'] == widget.clientId,
+        orElse: () => null,
+      );
+      if (c != null) clientName = c['full_name'];
     }
+  } catch (_) {}
 
-    final arabicFont = await PdfGoogleFonts.notoSansArabicRegular();
+  // 4. Prepare table data
+  final rawHeaders = ['التاريخ', 'نوع العملية', 'رقم الفاتورة', 'المبلغ'];
+  final rawDataRows = clientTransactions.map<List<String>>((tx) {
+    return [
+      fmtDate(tx['date'].toString()),
+      tx['label'].toString(),
+      tx['facture_id']?.toString() ?? '-',
+      '${(tx['amount'] as num).toStringAsFixed(2)} دج',
+    ];
+  }).toList();
 
-    pdf.addPage(
-      pw.Page(
-        textDirection: pw.TextDirection.rtl,
-        build: (pw.Context context) {
-          return pw.Column(
+  // Reverse for RTL column flow
+  final headers = rawHeaders.reversed.toList();
+  final dataRows = rawDataRows.map((r) => r.reversed.toList()).toList();
+
+  // 5. Timestamps & duration
+  final now = DateTime.now();
+  final printedAt = '${now.day.toString().padLeft(2, '0')}-'
+      '${now.month.toString().padLeft(2, '0')}-${now.year} '
+      '${now.hour.toString().padLeft(2, '0')}:'
+      '${now.minute.toString().padLeft(2, '0')}';
+
+  // 6. Add page with title, date range, duration, divider, then table
+  pdf.addPage(
+    pw.MultiPage(
+      pageFormat: PdfPageFormat.a4.landscape,
+      build: (context) => [
+        pw.Directionality(
+          textDirection: pw.TextDirection.rtl,
+          child: pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              pw.Text(
-                'كشف حساب العميل: $clientName',
-                style: pw.TextStyle(
-                  fontSize: 20,
-                  fontWeight: pw.FontWeight.bold,
-                  font: arabicFont,
+              // Title
+              pw.Header(
+                level: 0,
+                child: pw.Text(
+                  'كشف حساب العميل: $clientName',
+                  style: pw.TextStyle(
+                    font: arabicFont,
+                    fontSize: 20,
+                    fontWeight: pw.FontWeight.bold,
+                    fontFallback: [latinFont],
+                  ),
                 ),
               ),
-              pw.SizedBox(height: 10),
-              if (startDate != null && endDate != null)
+
+              // Printed At
+              pw.Text(
+                'تاريخ التقرير: ${fmtDate(now.toIso8601String())}',
+                style: pw.TextStyle(font: arabicFont, fontSize: 12, fontFallback: [latinFont]),
+              ),
+
+              // Date range & duration
+              if (startDate != null && endDate != null) ...[
+                pw.SizedBox(height: 4),
                 pw.Text(
                   'من ${fmtDate(startDate!.toIso8601String())} إلى ${fmtDate(endDate!.toIso8601String())}',
-                  style: pw.TextStyle(font: arabicFont),
+                  style: pw.TextStyle(font: arabicFont, fontSize: 12, fontFallback: [latinFont]),
                 ),
-              pw.SizedBox(height: 20),
+                pw.Text(
+                  'المدة: ${endDate!.difference(startDate!).inDays} يومًا',
+                  style: pw.TextStyle(font: arabicFont, fontSize: 12, fontFallback: [latinFont]),
+                ),
+              ],
+
+              // Divider
+              pw.SizedBox(height: 8),
+              pw.Divider(),
+
+              // Transactions table
               pw.Table.fromTextArray(
-                context: context,
-                headers: ['التاريخ', 'نوع العملية', 'رقم الفاتورة', 'المبلغ'],
+                headers: headers,
+                data: dataRows,
                 headerStyle: pw.TextStyle(
-                  fontWeight: pw.FontWeight.bold,
                   font: arabicFont,
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 14,
+                  fontFallback: [latinFont],
                 ),
-                cellStyle: pw.TextStyle(font: arabicFont),
-                data: clientTransactions.map((transaction) {
-                  return [
-                    fmtDate(transaction['date'].toString()),
-                    transaction['label'].toString(),
-                    transaction['facture_id']?.toString() ?? '-',
-                    '${transaction['amount'].toString()} دج',
-                  ];
-                }).toList(),
+                cellStyle: pw.TextStyle(
+                  font: arabicFont,
+                  fontSize: 12,
+                  fontFallback: [latinFont],
+                ),
+                cellAlignment: pw.Alignment.centerRight,
+                headerDecoration: pw.BoxDecoration(color: PdfColors.grey300),
+                border: pw.TableBorder.all(width: 0.5),
               ),
             ],
-          );
-        },
-      ),
-    );
+          ),
+        ),
+      ],
+    ),
+  );
 
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => pdf.save(),
+  // 7. Save via FilePicker
+  final bytes = await pdf.save();
+  final String? outputDir = await FilePicker.platform.getDirectoryPath(
+    dialogTitle: 'اختر مجلد الحفظ',
+  );
+  if (outputDir != null) {
+    final safeStamp = printedAt.replaceAll(':', '-').replaceAll(' ', '_');
+    final filePath = '$outputDir/كشف_حساب_${widget.clientId}_$safeStamp.pdf';
+    await io.File(filePath).writeAsBytes(bytes);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تم حفظ الملف في $filePath'), backgroundColor: Colors.green),
     );
   }
+}
+
+
+/// Helper to build a table cell with optional LTR override
+pw.Widget _cell(String text, pw.Font font,
+    {bool isHeader = false, bool ltr = false}) {
+  return pw.Padding(
+    padding: const pw.EdgeInsets.all(6),
+    child: pw.Directionality(
+      textDirection:
+          ltr ? pw.TextDirection.ltr : pw.TextDirection.rtl,
+      child: pw.Text(
+        text,
+        style: pw.TextStyle(
+          font: font,
+          fontSize: isHeader ? 12 : 10,
+          fontWeight:
+              isHeader ? pw.FontWeight.bold : pw.FontWeight.normal,
+        ),
+      ),
+    ),
+  );
+}
+
+/// Simple check for English letters
+bool _containsEnglish(String s) => RegExp(r'[A-Za-z]').hasMatch(s);
+
 
   @override
   Widget build(BuildContext context) {
@@ -2321,7 +2513,7 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
                                 const DataColumn(label: Text('المنتج')),
                                 const DataColumn(label: Text('الكمية')),
                                 const DataColumn(label: Text('سعر البيع')),
-if (role == 'Admin' || role == 'SuperAdmin')
+                                if (role == 'Admin' || role == 'SuperAdmin')
                                   const DataColumn(label: Text('ربح/قطعة')),
                                 if (role == 'Admin' || role == 'SuperAdmin')
                                   const DataColumn(label: Text('إجمالي الربح')),

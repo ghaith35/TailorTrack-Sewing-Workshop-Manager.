@@ -43,10 +43,12 @@ dependencies:
   shared_preferences: ^2.0.15
   crypto: ^3.0.0
   pointycastle: ^3.4.0
-  flutter_secure_storage: ^8.0.0
   win32: ^5.14.0
   fl_chart: ^0.60.0
+  http_parser: ^4.0.0  
+  path: ^1.8.3 
   basic_utils: ^5.7.0
+  dropdown_search: ^5.0.6
 
 
 
@@ -101,6 +103,7 @@ flutter:
 
   assets:
     - assets/fonts/
+    - assets/images/new_logo.png
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.

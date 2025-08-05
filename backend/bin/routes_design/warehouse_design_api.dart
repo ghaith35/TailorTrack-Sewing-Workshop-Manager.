@@ -16,8 +16,7 @@ Router getDesignWarehouseRoutes(PostgreSQLConnection db) {
   // ---------------- READY PRODUCTS ----------------
 
   // GET /design/warehouse/product-inventory?client_id=&season_id=
-  // returns each inventory row (id) + model info
-// GET /design/warehouse/product-inventory?client_id=&season_id=
+  // Returns each inventory row (id) + model info including image_url
   router.get('/product-inventory', (Request req) async {
     final qp = req.url.queryParameters;
     final clientId = int.tryParse(qp['client_id'] ?? '');
@@ -51,6 +50,7 @@ Router getDesignWarehouseRoutes(PostgreSQLConnection db) {
         m.sizes_text,
         m.price,
         m.description,
+        m.image_url,
         c.id          AS client_id,
         c.full_name   AS client_name,
         s.id          AS season_id,
@@ -77,10 +77,11 @@ Router getDesignWarehouseRoutes(PostgreSQLConnection db) {
           'sizes_text'   : r[10] ?? '',
           'price'        : _num(r[11]),
           'description'  : r[12],
-          'client_id'    : r[13],
-          'client_name'  : r[14],
-          'season_id'    : r[15],
-          'season_name'  : r[16],
+          'image_url'    : r[13] ?? '',
+          'client_id'    : r[14],
+          'client_name'  : r[15],
+          'season_id'    : r[16],
+          'season_name'  : r[17],
         }).toList();
 
     return Response.ok(jsonEncode(out), headers: {'Content-Type': 'application/json'});
@@ -90,78 +91,91 @@ Router getDesignWarehouseRoutes(PostgreSQLConnection db) {
   // body: { warehouse_id:1, model_id:##, quantity:## }
   // => if (warehouse_id, model_id) already exists, just add to quantity
   router.post('/product-inventory', (Request req) async {
-  try {
-    final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-    final wid = _int(data['warehouse_id'] ?? 1);
-    final mid = _int(data['model_id']);
-    final qty = _num(data['quantity']);
+    try {
+      final data = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+      final wid = _int(data['warehouse_id'] ?? 1);
+      final mid = _int(data['model_id']);
+      final qty = _num(data['quantity']);
 
-    if (mid == 0 || qty <= 0) {
-      return Response(400,
-        body: jsonEncode({'error': 'model_id and positive quantity required'}),
-        headers: {'Content-Type': 'application/json'});
+      if (mid == 0 || qty <= 0) {
+        return Response(400,
+            body: jsonEncode({'error': 'model_id and positive quantity required'}),
+            headers: {'Content-Type': 'application/json'});
+      }
+
+      // UPSERT: if (warehouse_id, model_id) exists, just add to its quantity
+      final rows = await db.query(r'''
+        INSERT INTO design.product_inventory (warehouse_id, model_id, quantity)
+        VALUES (@w, @m, @q)
+        ON CONFLICT (warehouse_id, model_id) 
+          DO UPDATE 
+            SET quantity     = product_inventory.quantity + EXCLUDED.quantity,
+                last_updated = CURRENT_TIMESTAMP
+        RETURNING id;
+      ''', substitutionValues: {
+        'w': wid,
+        'm': mid,
+        'q': qty,
+      });
+
+      return Response.ok(
+        jsonEncode({'id': rows.first[0]}),
+        headers: {'Content-Type': 'application/json'}
+      );
+    } catch (e, st) {
+      print('ERROR POST /design/warehouse/product-inventory: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Create/Upsert failed', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
     }
-
-    // UPSERT: if (warehouse_id, model_id) exists, just add to its quantity
-    final rows = await db.query(r'''
-      INSERT INTO design.product_inventory (warehouse_id, model_id, quantity)
-      VALUES (@w, @m, @q)
-      ON CONFLICT (warehouse_id, model_id) 
-        DO UPDATE 
-          SET quantity     = product_inventory.quantity + EXCLUDED.quantity,
-              last_updated = CURRENT_TIMESTAMP
-      RETURNING id;
-    ''', substitutionValues: {
-      'w': wid,
-      'm': mid,
-      'q': qty,
-    });
-
-    return Response.ok(
-      jsonEncode({'id': rows.first[0]}),
-      headers: {'Content-Type': 'application/json'}
-    );
-  } catch (e, st) {
-    print('ERROR POST /design/warehouse/product-inventory: $e\n$st');
-    return Response.internalServerError(
-      body: jsonEncode({'error': 'Create/Upsert failed', 'details': e.toString()}),
-      headers: {'Content-Type': 'application/json'},
-    );
-  }
-});
+  });
 
   // PUT /design/warehouse/product-inventory/<id>
   router.put('/product-inventory/<id|[0-9]+>', (Request req, String id) async {
-    final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
-    await db.query('''
-      UPDATE design.product_inventory
-         SET warehouse_id = @w,
-             model_id     = @m,
-             quantity     = @q,
-             last_updated = CURRENT_TIMESTAMP
-       WHERE id = @id
-    ''', substitutionValues: {
-      'id': int.parse(id),
-      'w' : _int(body['warehouse_id'] ?? 1),
-      'm' : _int(body['model_id']),
-      'q' : _num(body['quantity']),
-    });
-    return Response.ok(jsonEncode({'status': 'updated'}),
-        headers: {'Content-Type': 'application/json'});
+    try {
+      final body = jsonDecode(await req.readAsString()) as Map<String, dynamic>;
+      await db.query('''
+        UPDATE design.product_inventory
+           SET warehouse_id = @w,
+               model_id     = @m,
+               quantity     = @q,
+               last_updated = CURRENT_TIMESTAMP
+         WHERE id = @id
+      ''', substitutionValues: {
+        'id': int.parse(id),
+        'w' : _int(body['warehouse_id'] ?? 1),
+        'm' : _int(body['model_id']),
+        'q' : _num(body['quantity']),
+      });
+      return Response.ok(jsonEncode({'status': 'updated'}),
+          headers: {'Content-Type': 'application/json'});
+    } catch (e, st) {
+      print('ERROR PUT /design/warehouse/product-inventory/$id: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Update failed', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
   });
 
   // DELETE /design/warehouse/product-inventory/<id>
   router.delete('/product-inventory/<id|[0-9]+>', (Request req, String id) async {
-    await db.query('DELETE FROM design.product_inventory WHERE id = @id',
-        substitutionValues: {'id': int.parse(id)});
-    return Response.ok(jsonEncode({'status': 'deleted'}),
-        headers: {'Content-Type': 'application/json'});
+    try {
+      await db.query('DELETE FROM design.product_inventory WHERE id = @id',
+          substitutionValues: {'id': int.parse(id)});
+      return Response.ok(jsonEncode({'status': 'deleted'}),
+          headers: {'Content-Type': 'application/json'});
+    } catch (e, st) {
+      print('ERROR DELETE /design/warehouse/product-inventory/$id: $e\n$st');
+      return Response.internalServerError(
+        body: jsonEncode({'error': 'Delete failed', 'details': e.toString()}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    }
   });
 
-  // ---------------- RAW MATERIALS (unchanged logic) ----------------
-  // ... (everything below is same as you sent, only tiny tweaks for _yyyyMMdd not needed)
-  // I keep it here complete for copy/paste:
-
+  // ---------------- RAW MATERIALS ----------------
   // GET /design/warehouse/material-types
   router.get('/material-types', (Request req) async {
     try {
@@ -422,7 +436,8 @@ Router getDesignWarehouseRoutes(PostgreSQLConnection db) {
           .toList();
       for (final s in specs) {
         await db.query('''
-          INSERT INTO design.material_spec_values (material_id, spec_id, value)
+          INSERT INTO design.material_spec_values (material_id, sp
+ec_id, value)
           VALUES (@mid, @sid, @v)
           ON CONFLICT (material_id, spec_id) DO UPDATE SET value=@v
         ''', substitutionValues: {

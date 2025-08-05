@@ -125,17 +125,111 @@ Router getEmbrodryEmployeesRoutes(PostgreSQLConnection db) {
   });
 
   // Delete (soft) employee
-  router.delete('/<id|[0-9]+>', (Request request, String id) async {
-    await db.query(
-      '''
-      UPDATE embroidery.employees
-         SET status = @deleted
-       WHERE id = @id
-      ''',
-      substitutionValues: {'deleted': 'deleted', 'id': int.parse(id)},
+  // ========== DELETE EMPLOYEE (hard delete if no dependencies) ==========
+router.delete('/<id|[0-9]+>', (Request req, String id) async {
+  try {
+    final empId = int.parse(id);
+
+    return await db.transaction((txn) async {
+      // 1) Check for attendance records
+      final attCountRow = await txn.query(
+        '''SELECT COUNT(*) FROM embroidery.employee_attendance
+           WHERE employee_id = @eid''',
+        substitutionValues: {'eid': empId},
+      );
+      final attCount = attCountRow.first[0] as int;
+      if (attCount > 0) {
+        return Response(
+          400,
+          body: jsonEncode({
+            'error':
+              'Cannot delete employee $empId: has $attCount attendance record(s).'
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // 2) Check for piece records
+      final pieceCountRow = await txn.query(
+        '''SELECT COUNT(*) FROM embroidery.piece_records
+           WHERE employee_id = @eid''',
+        substitutionValues: {'eid': empId},
+      );
+      final pieceCount = pieceCountRow.first[0] as int;
+      if (pieceCount > 0) {
+        return Response(
+          400,
+          body: jsonEncode({
+            'error':
+              'Cannot delete employee $empId: has $pieceCount piece record(s).'
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // 3) Check for loans
+      final loanCountRow = await txn.query(
+        '''SELECT COUNT(*) FROM embroidery.employee_loans
+           WHERE employee_id = @eid''',
+        substitutionValues: {'eid': empId},
+      );
+      final loanCount = loanCountRow.first[0] as int;
+      if (loanCount > 0) {
+        return Response(
+          400,
+          body: jsonEncode({
+            'error':
+              'Cannot delete employee $empId: has $loanCount loan(s).'
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // 4) Check for debts
+      final debtCountRow = await txn.query(
+        '''SELECT COUNT(*) FROM embroidery.employee_debts
+           WHERE employee_id = @eid''',
+        substitutionValues: {'eid': empId},
+      );
+      final debtCount = debtCountRow.first[0] as int;
+      if (debtCount > 0) {
+        return Response(
+          400,
+          body: jsonEncode({
+            'error':
+              'Cannot delete employee $empId: has $debtCount debt record(s).'
+          }),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      // 5) Finally, delete the employee
+      final del = await txn.query(
+        '''DELETE FROM embroidery.employees
+           WHERE id = @eid
+         RETURNING id''',
+        substitutionValues: {'eid': empId},
+      );
+      if (del.isEmpty) {
+        return Response.notFound(
+          jsonEncode({'error': 'Employee not found'}),
+          headers: {'Content-Type': 'application/json'},
+        );
+      }
+
+      return Response.ok(
+        jsonEncode({'deleted': empId}),
+        headers: {'Content-Type': 'application/json'},
+      );
+    });
+  } catch (e, st) {
+    print('❌ DELETE /employees/$id ERROR: $e\n$st');
+    return Response.internalServerError(
+      body: jsonEncode({'error': 'Delete failed', 'details': e.toString()}),
+      headers: {'Content-Type': 'application/json'},
     );
-    return Response.ok('{"ok":true}');
-  });
+  }
+});
 
   // Utility: format DateTime as YYYY-MM-DD
   String formatDate(DateTime d) =>

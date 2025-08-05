@@ -1,896 +1,1267 @@
+// lib/embroidery/embroidery_warehouse_section.dart
+
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
+import '../main.dart';
 
-class SewingEmployeesSection extends StatefulWidget {
-  const SewingEmployeesSection({super.key});
+class EmbroideryWarehouseSection extends StatefulWidget {
+  const EmbroideryWarehouseSection({Key? key}) : super(key: key);
+
   @override
-  State<SewingEmployeesSection> createState() => _SewingEmployeesSectionState();
+  State<EmbroideryWarehouseSection> createState() =>
+      _EmbroideryWarehouseSectionState();
 }
 
-class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
-  int selectedTab = 0; // 0: معلومات, 1: الحضور, 2: اداره سلف و قطع العمال, 3: رواتب العمال
-  int selectedInfoTab = 0; // 0: شهرياً, 1: قطعة
+class _EmbroideryWarehouseSectionState
+    extends State<EmbroideryWarehouseSection> {
+  // ── Tabs ─────────────────────────────────────────────────────
+  int _tab = 0;
+  final _tabs = const ['المخزون الجاهز', 'المواد الخام'];
 
-  // Attendance state
-  int attType = 0; // 0: monthly, 1: piece
-  String selectedMonth = _initialMonth();
-  int? selectedEmployeeId;
-  List<dynamic> attEmployees = [];
-  bool attLoading = false;
+  // ── Endpoints ───────────────────────────────────────────────
+  String get _modelsBase     => '${globalServerUri.toString()}/embrodry/models';
+  String get _warehouseBase  => '${globalServerUri.toString()}/embrodry/warehouse';
+  String get _imagesBase     => '${globalServerUri.toString()}'; // for image_url
 
-  // Info state
-  List<dynamic> employees = [];
-  bool isLoading = false;
+  // ── Helpers ─────────────────────────────────────────────────
+  String s(dynamic v) => v == null ? '—' : v.toString();
+  double n(dynamic v) =>
+      v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0.0;
+  String money(dynamic v) => n(v).toStringAsFixed(2);
+  String formatYMD(dynamic dateStr) {
+    if (dateStr == null) return '';
+    try {
+      final d = DateTime.parse(dateStr.toString());
+      return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return dateStr.toString().split('T').first;
+    }
+  }
 
-  // Loans & Pieces state
-  int selectedDataTab = 0; // 0: سلف, 1: قطع
-  List<dynamic> loans = [];
-  List<dynamic> pieces = [];
-  List<dynamic> allEmployees = [];
-  List<dynamic> pieceEmployees = [];
-  List<dynamic> allModels = [];
-  bool isDataLoading = false;
+  // ── “المخزون الجاهز” state ─────────────────────────────────────
+  List<Map<String, dynamic>> _ready = [];
+  bool _loadingReady = false;
+  String? _errReady;
 
-  // Salaries tab state
-  int selectedSalariesTab = 0; // 0: شهرياً, 1: قطعة
-  String selectedSalaryMonth = _initialMonth();
-  bool salaryLoading = false;
-  List<dynamic> monthlyAttendance = [];
-  List<dynamic> pieceAttendance = [];
-  Map<int, Map<String, num>> loanData = {};
-  List<Map<String, dynamic>> monthlyTableRows = [];
-  List<Map<String, dynamic>> pieceTableRows = [];
+  List<Map<String, dynamic>> _clients = [];
+  List<Map<String, dynamic>> _seasons = [];
+  int? _clientFilter;
+  int? _seasonFilter;
+  final TextEditingController _searchCtl = TextEditingController();
 
-  // SCROLL CONTROLLERS FOR TABLES
-  final ScrollController infoTableController = ScrollController();
-  final ScrollController loansTableController = ScrollController();
-  final ScrollController piecesTableController = ScrollController();
-  final ScrollController monthlySalaryTableController = ScrollController();
-  final ScrollController pieceSalaryTableController = ScrollController();
-  final ScrollController monthlyAttTableController = ScrollController();
-  final ScrollController pieceAttTableController = ScrollController();
+  // ── “المواد الخام” state ───────────────────────────────────────
+  List<dynamic> _types = [];
+  int? _selectedTypeId;
+  List<dynamic> _specs = [];
+  List<dynamic> _materials = [];
+  bool _loadingTypes = false;
+  bool _loadingMaterials = false;
+
+  // Scroll controllers
+  final _hReady = ScrollController();
+  final _vReady = ScrollController();
+  final _hRaw   = ScrollController();
+  final _vRaw   = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchFilters();
+    _fetchReady();
+    _fetchTypes();
+    _searchCtl.addListener(() => setState(() {}));
+  }
 
   @override
   void dispose() {
-    infoTableController.dispose();
-    loansTableController.dispose();
-    piecesTableController.dispose();
-    monthlySalaryTableController.dispose();
-    pieceSalaryTableController.dispose();
-    monthlyAttTableController.dispose();
-    pieceAttTableController.dispose();
+    _hReady.dispose();
+    _vReady.dispose();
+    _hRaw.dispose();
+    _vRaw.dispose();
+    _searchCtl.dispose();
     super.dispose();
   }
 
-  @override
-  void initState() {
-    super.initState();
-    fetchEmployees();
-    fetchAttendance();
-    fetchDataSection();
-    fetchSalariesData();
+  // ── Load client/season lists ─────────────────────────────────
+  Future<void> _fetchFilters() async {
+    try {
+      final cRes = await http.get(Uri.parse('$_modelsBase/clients'));
+      final sRes = await http.get(Uri.parse('$_modelsBase/seasons'));
+      if (cRes.statusCode == 200) {
+        _clients = List<Map<String, dynamic>>.from(jsonDecode(cRes.body));
+      }
+      if (sRes.statusCode == 200) {
+        _seasons = List<Map<String, dynamic>>.from(jsonDecode(sRes.body));
+      }
+      setState(() {});
+    } catch (_) {}
   }
 
-  static String _initialMonth() {
-    final now = DateTime.now();
-    return '${now.year}-${now.month.toString().padLeft(2, '0')}';
-  }
-
-  // ... [CUT: unchanged functions for brevity, unchanged from your code] ...
-
-  // ========== TABLES: SCROLLBAR ADDED ==========
-
-  Widget _buildInfoTable() {
-    final sellerType = selectedInfoTab == 0 ? 'month' : 'piece';
-    final filtered = employees.where((e) => e['seller_type'] == sellerType).toList();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.add),
-            label: const Text('إضافة عامل جديد'),
-            onPressed: () =>
-                addOrEditEmployee(initial: {'seller_type': sellerType}),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : filtered.isEmpty
-                  ? const Center(child: Text('لا يوجد عمال هنا'))
-                  : Center(
-                      child: Scrollbar(
-                        controller: infoTableController,
-                        thumbVisibility: true,
-                        trackVisibility: true,
-                        child: SingleChildScrollView(
-                          controller: infoTableController,
-                          scrollDirection: Axis.horizontal,
-                          child: DataTable(
-                            headingRowColor:
-                                MaterialStateProperty.all(
-                                    Theme.of(context).colorScheme.primary),
-                            columns: [
-                              const DataColumn(
-                                  label: Text('الاسم الكامل',
-                                      style: TextStyle(color: Colors.white))),
-                              const DataColumn(
-                                  label: Text('الجوال',
-                                      style: TextStyle(color: Colors.white))),
-                              const DataColumn(
-                                  label: Text('العنوان',
-                                      style: TextStyle(color: Colors.white))),
-                              if (selectedInfoTab == 0)
-                                const DataColumn(
-                                    label: Text('الراتب',
-                                        style: TextStyle(color: Colors.white))),
-                              const DataColumn(
-                                  label: Text('المهنه',
-                                      style: TextStyle(color: Colors.white))),
-                              const DataColumn(
-                                  label: Text('إجراءات',
-                                      style: TextStyle(color: Colors.white))),
-                            ],
-                            rows: filtered.map<DataRow>((emp) {
-                              return DataRow(cells: [
-                                DataCell(Text(
-                                    '${emp['first_name']} ${emp['last_name']}')),
-                                DataCell(Text(emp['phone'] ?? '')),
-                                DataCell(Text(emp['address'] ?? '')),
-                                if (selectedInfoTab == 0)
-                                  DataCell(Text(emp['salary']?.toString() ?? '')),
-                                DataCell(Text(emp['role'] ?? '')),
-                                DataCell(Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.edit, color: Colors.green),
-                                      onPressed: () => addOrEditEmployee(initial: emp),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete, color: Colors.red),
-                                      onPressed: () => deleteEmployee(emp['id']),
-                                    ),
-                                  ],
-                                )),
-                              ]);
-                            }).toList(),
-                          ),
-                        ),
-                      ),
-                    ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildLoansTable() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: ElevatedButton.icon(
-            icon: const Icon(Icons.add),
-            label: const Text('إضافة سلفة'),
-            onPressed: () => addOrEditLoan(),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: Center(
-            child: Scrollbar(
-              controller: loansTableController,
-              thumbVisibility: true,
-              trackVisibility: true,
-              child: SingleChildScrollView(
-                controller: loansTableController,
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  headingRowColor: MaterialStateProperty.all(
-                      Theme.of(context).colorScheme.primary),
-                  columns: const [
-                    DataColumn(
-                        label: Text('العامل',
-                            style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('المبلغ',
-                            style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('المدة (شهور)',
-                            style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('التاريخ',
-                            style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('خيارات',
-                            style: TextStyle(color: Colors.white))),
-                  ],
-                  rows: loans.map((loan) {
-                    return DataRow(cells: [
-                      DataCell(Text(loan['employee_name'] ?? '')),
-                      DataCell(Text(loan['amount'].toString())),
-                      DataCell(Text('${loan['duration_months'] ?? 1}')),
-                      DataCell(Text(loan['loan_date']?.substring(0, 10) ?? '')),
-                      DataCell(Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.edit, color: Colors.green),
-                            onPressed: () => addOrEditLoan(initial: loan),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () => deleteLoan(loan['id']),
-                          ),
-                        ],
-                      )),
-                    ]);
-                  }).toList(),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPiecesTable() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Align(
-            alignment: Alignment.centerRight,
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.add),
-              label: const Text('إضافة قطعة'),
-              onPressed: () => addOrEditPiece(),
-            )),
-        const SizedBox(height: 16),
-        Expanded(
-          child: Center(
-            child: Scrollbar(
-              controller: piecesTableController,
-              thumbVisibility: true,
-              trackVisibility: true,
-              child: SingleChildScrollView(
-                controller: piecesTableController,
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  headingRowColor: MaterialStateProperty.all(
-                      Theme.of(context).colorScheme.primary),
-                  columns: const [
-                    DataColumn(
-                        label: Text('العامل',
-                            style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('الموديل',
-                            style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('الكمية',
-                            style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('سعر القطعة',
-                            style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('التاريخ',
-                            style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('خيارات',
-                            style: TextStyle(color: Colors.white))),
-                  ],
-                  rows: pieces.map((piece) {
-                    return DataRow(cells: [
-                      DataCell(Text(piece['employee_name'] ?? '')),
-                      DataCell(Text(piece['model_name'] ?? '')),
-                      DataCell(Text(piece['quantity'].toString())),
-                      DataCell(Text(piece['piece_price'].toString())),
-                      DataCell(Text(piece['record_date']?.substring(0, 10) ?? '')),
-                      DataCell(Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.edit, color: Colors.green),
-                            onPressed: () => addOrEditPiece(initial: piece),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () => deletePiece(piece['id']),
-                          ),
-                        ],
-                      )),
-                    ]);
-                  }).toList(),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildMonthlySalaryTable() {
-    if (monthlyTableRows.isEmpty) {
-      return const Center(child: Text('لا يوجد بيانات رواتب هنا'));
+  // ── Fetch ready inventory ─────────────────────────────────────
+  Future<void> _fetchReady() async {
+    setState(() {
+      _loadingReady = true;
+      _errReady = null;
+    });
+    try {
+      final uri = Uri.parse('$_warehouseBase/product-inventory').replace(
+        queryParameters: {
+          if (_clientFilter != null) 'client_id': '$_clientFilter',
+          if (_seasonFilter != null) 'season_id': '$_seasonFilter',
+        },
+      );
+      final res = await http.get(uri);
+      if (res.statusCode == 200) {
+        _ready = List<Map<String, dynamic>>.from(jsonDecode(res.body));
+      } else {
+        _errReady = '(${res.statusCode}) فشل تحميل البيانات';
+      }
+    } catch (e) {
+      _errReady = 'خطأ: $e';
+    } finally {
+      setState(() => _loadingReady = false);
     }
-    return Center(
-      child: Scrollbar(
-        controller: monthlySalaryTableController,
-        thumbVisibility: true,
-        trackVisibility: true,
-        child: SingleChildScrollView(
-          controller: monthlySalaryTableController,
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
-            headingRowColor:
-                MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
-            columns: const [
-              DataColumn(
-                  label: Text('الاسم الكامل',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('الراتب',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('مجموع الساعات',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('الراتب الفعلي',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('إجمالي السلف',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('سلفة هذا الشهر',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('باقي السلف',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('الراتب النهائي',
-                      style: TextStyle(color: Colors.white))),
-            ],
-            rows: monthlyTableRows.map<DataRow>((row) {
-              return DataRow(cells: [
-                DataCell(Text(row['full_name'])),
-                DataCell(Text(row['salary'].toStringAsFixed(2))),
-                DataCell(Text(row['total_hours'].toStringAsFixed(2))),
-                DataCell(Text(row['calculated_salary'].toStringAsFixed(2))),
-                DataCell(Text(row['total_loan'].toStringAsFixed(2))),
-                DataCell(Text(row['monthly_due'].toStringAsFixed(2))),
-                DataCell(Text(row['remaining_loan'].toStringAsFixed(2))),
-                DataCell(Text(row['final_salary'].toStringAsFixed(2))),
-              ]);
-            }).toList(),
-          ),
+  }
+
+  List<Map<String, dynamic>> get _filteredReady {
+    final q = _searchCtl.text.trim().toLowerCase();
+    return _ready.where((r) {
+      if (n(r['quantity']) <= 0) return false;
+      if (_clientFilter != null && r['client_id'] != _clientFilter) return false;
+      if (_seasonFilter != null && r['season_id'] != _seasonFilter) return false;
+      if (q.isNotEmpty &&
+          !r['model_name'].toString().toLowerCase().contains(q)) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+
+  Future<void> _editReady(int id, double currentQty) async {
+    final ctl = TextEditingController(text: currentQty.toString());
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('تعديل الكمية'),
+        content: TextField(
+          controller: ctl,
+          decoration: const InputDecoration(labelText: 'الكمية'),
+          keyboardType: TextInputType.number,
         ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              final q = double.tryParse(ctl.text) ?? 0;
+              final res = await http.put(
+                Uri.parse('$_warehouseBase/product-inventory/$id'),
+                headers: {'Content-Type': 'application/json'},
+                body: jsonEncode({'quantity': q}),
+              );
+              Navigator.pop(context);
+              if (res.statusCode == 200) _fetchReady();
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildPieceSalaryTable() {
-    if (pieceTableRows.isEmpty) {
-      return const Center(child: Text('لا يوجد بيانات رواتب هنا'));
-    }
-    return Center(
-      child: Scrollbar(
-        controller: pieceSalaryTableController,
-        thumbVisibility: true,
-        trackVisibility: true,
-        child: SingleChildScrollView(
-          controller: pieceSalaryTableController,
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
-            headingRowColor:
-                MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
-            columns: const [
-              DataColumn(
-                  label: Text('الاسم الكامل',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('مجموع القطع',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('مجموع الأجر',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('إجمالي السلف',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('سلفة هذا الشهر',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('باقي السلف',
-                      style: TextStyle(color: Colors.white))),
-              DataColumn(
-                  label: Text('الراتب النهائي',
-                      style: TextStyle(color: Colors.white))),
-            ],
-            rows: pieceTableRows.map<DataRow>((row) {
-              return DataRow(cells: [
-                DataCell(Text(row['full_name'])),
-                DataCell(Text(row['total_qty'].toString())),
-                DataCell(Text(row['total_salary'].toStringAsFixed(2))),
-                DataCell(Text(row['total_loan'].toStringAsFixed(2))),
-                DataCell(Text(row['monthly_due'].toStringAsFixed(2))),
-                DataCell(Text(row['remaining_loan'].toStringAsFixed(2))),
-                DataCell(Text(row['final_salary'].toStringAsFixed(2))),
-              ]);
-            }).toList(),
+  Future<void> _deleteReady(int id) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: const Text('هل أنت متأكد؟'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('حذف', style: TextStyle(color: Colors.red)),
           ),
-        ),
+        ],
       ),
     );
+    if (ok == true) {
+      final res = await http.delete(Uri.parse('$_warehouseBase/product-inventory/$id'));
+      if (res.statusCode == 200) _fetchReady();
+    }
   }
 
-  // ... [CUT: unchanged build(), _buildSalariesSection(), etc.] ...
-
-  Widget _buildAttendanceSection() {
-    final months = _generateMonths();
-    return Column(
-      children: [
-        Row(
+  void _viewReady(Map<String, dynamic> r) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('تفاصيل المخزون #${r['id']}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('الشهر:', style: TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(width: 8),
-            DropdownButton<String>(
-              value: selectedMonth,
-              items: months
-                  .map((m) => DropdownMenuItem(
-                        value: m,
-                        child: Text(_monthLabel(m)),
-                      ))
-                  .toList(),
-              onChanged: (val) {
-                setState(() {
-                  selectedMonth = val!;
-                  fetchAttendance();
-                });
-              },
-            ),
+            _infoRow('الموديل', r['model_name']),
+            _infoRow('النوع', r['model_type']),
+            _infoRow('التاريخ', formatYMD(r['model_date'])),
+            _infoRow('سعر الغرزة', money(r['stitch_price'])),
+            _infoRow('عدد الغرز', r['stitch_number'].toString()),
+            _infoRow('السعر الإجمالي', money(r['total_price'])),
+            _infoRow('الكمية', money(r['quantity'])),
+            _infoRow('العميل', s(r['client_name'])),
+            _infoRow('الموسم', s(r['season_name'])),
           ],
         ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: Row(
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إغلاق')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showModelDetailsDialog(int modelId) async {
+    try {
+      final res = await http.get(Uri.parse('$_modelsBase/$modelId'));
+      if (res.statusCode != 200) return;
+      final model = jsonDecode(res.body) as Map<String, dynamic>;
+
+      await showDialog(
+        context: context,
+        builder: (_) => Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.all(16),
+          child: Stack(
             children: [
-              Container(
-                width: 180,
-                color: Colors.grey[200],
-                child: Column(
-                  children: [
-                    for (int i = 0; i < 2; i++)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8.0, vertical: 4.0),
-                        child: TextButton(
-                          style: TextButton.styleFrom(
-                            backgroundColor: attType == i
-                                ? Theme.of(context).colorScheme.primary
-                                : null,
-                            foregroundColor: attType == i
-                                ? Colors.white
-                                : Theme.of(context).colorScheme.onSurface,
-                          ),
-                          child: Text(i == 0 ? 'شهرياً' : 'قطعة'),
-                          onPressed: () {
-                            setState(() {
-                              attType = i;
-                              fetchAttendance();
-                            });
-                          },
-                        ),
-                      ),
-                    const Divider(),
-                    Expanded(
-                      child: attLoading
-                          ? const Center(child: CircularProgressIndicator())
-                          : attEmployees.isEmpty
-                              ? const Center(child: Text('لا يوجد عمال'))
-                              : ListView.builder(
-                                  itemCount: attEmployees.length,
-                                  itemBuilder: (context, i) {
-                                    final emp = attEmployees[i];
-                                    return ListTile(
-                                      title: Text(
-                                          '${emp['first_name']} ${emp['last_name']}'),
-                                      selected: selectedEmployeeId ==
-                                          emp['employee_id'],
-                                      onTap: () => setState(() =>
-                                          selectedEmployeeId =
-                                              emp['employee_id']),
-                                    );
-                                  },
-                                ),
-                    ),
-                  ],
+              InteractiveViewer(
+                child: Image.network(
+                  model['image_url'] != null && model['image_url'].isNotEmpty
+                      ? '$_imagesBase${model['image_url']}'
+                      : '',
+                  fit: BoxFit.contain,
+                  loadingBuilder: (ctx, child, progress) {
+                    if (progress == null) return child;
+                    return const Center(child: CircularProgressIndicator());
+                  },
+                  errorBuilder: (ctx, err, st) =>
+                      const Center(child: Icon(Icons.broken_image, size: 64, color: Colors.grey)),
                 ),
               ),
-              const VerticalDivider(width: 1),
-              Expanded(
-                child: selectedEmployeeId == null
-                    ? const Center(child: Text('اختر عامل'))
-                    : attType == 0
-                        ? _MonthlyAttendanceTable(
-                            attEmployees.firstWhere(
-                                (e) => e['employee_id'] == selectedEmployeeId),
-                            controller: monthlyAttTableController,
-                          )
-                        : _PieceAttendanceTable(
-                            attEmployees.firstWhere(
-                                (e) => e['employee_id'] == selectedEmployeeId),
-                            controller: pieceAttTableController,
-                          ),
+              Positioned(
+                top: 16,
+                right: 16,
+                child: IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 30),
+                  onPressed: () => Navigator.pop(context),
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.black54,
+                    padding: const EdgeInsets.all(12),
+                  ),
+                ),
               ),
             ],
           ),
         ),
-      ],
-    );
+      );
+    } catch (_) {}
   }
 
-  // ... [CUT: rest of unchanged code, dialogs, etc.] ...
-}
-
-// ========== Modified Attendance Table Widgets ==========
-
-class _MonthlyAttendanceTable extends StatelessWidget {
-  final Map emp;
-  final ScrollController controller;
-  const _MonthlyAttendanceTable(this.emp, {required this.controller});
-
-  @override
-  Widget build(BuildContext context) {
-    final records = List.from(emp['attendance'] ?? []);
-    final salary = (emp['salary'] ?? 0).toDouble();
-    final hourRate = salary / (26 * 8);
-    double totalHours = 0;
-    double totalSalary = 0;
-
-    final rows = records.map<DataRow>((att) {
-      final inTime = att['check_in'] != null
-          ? DateTime.tryParse(att['check_in'])
-          : null;
-      final outTime = att['check_out'] != null
-          ? DateTime.tryParse(att['check_out'])
-          : null;
-      double hoursWorked = 0;
-      if (inTime != null && outTime != null) {
-        hoursWorked = outTime.difference(inTime).inMinutes / 60.0;
+Future<void> _fetchTypes() async {
+    setState(() => _loadingTypes = true);
+    try {
+      final res = await http.get(Uri.parse('$_warehouseBase/material-types'));
+      if (res.statusCode == 200) {
+        _types = jsonDecode(res.body);
+        if (_types.isNotEmpty && _selectedTypeId == null) {
+          _selectedTypeId = _types.first['id'];
+          await _fetchMaterialsForType(_selectedTypeId!);
+        }
       }
-      final daySalary = hourRate * hoursWorked;
-      totalHours += hoursWorked;
-      totalSalary += daySalary;
-      return DataRow(cells: [
-        DataCell(Text(att['date']?.substring(0, 10) ?? '')),
-        DataCell(Text(inTime != null
-            ? "${inTime.hour}:${inTime.minute.toString().padLeft(2, '0')}"
-            : '')),
-        DataCell(Text(outTime != null
-            ? "${outTime.hour}:${outTime.minute.toString().padLeft(2, '0')}"
-            : '')),
-        DataCell(Text(hoursWorked.toStringAsFixed(2))),
-        DataCell(Text(hourRate.toStringAsFixed(2))),
-        DataCell(Text(daySalary.toStringAsFixed(2))),
-      ]);
-    }).toList();
+    } finally {
+      setState(() => _loadingTypes = false);
+    }
+  }
+
+  Future<void> _fetchMaterialsForType(int tid) async {
+    setState(() {
+      _loadingMaterials = true;
+      _specs = [];
+      _materials = [];
+    });
+    try {
+      final res = await http.get(
+          Uri.parse('$_warehouseBase/materials?type_id=$tid'));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        _specs = data['specs'];
+        _materials = data['materials'];
+      }
+    } finally {
+      setState(() => _loadingMaterials = false);
+    }
+  }
+  // ── Import, Raw‐materials, Add/Edit Type/Material, etc.
+  //     (all of your existing methods for _addFromModelDialog,
+  //     _addOrEditType, _deleteType, _addOrEditMaterial, _deleteMaterial)
+  //     remain exactly the same as before.
+
+  // ── UI for “المخزون الجاهز” ─────────────────────────────────
+  Widget _readyTab() {
+    if (_loadingReady) return const Center(child: CircularProgressIndicator());
+    if (_errReady != null) return Center(child: Text(_errReady!));
+
+    final rows = _filteredReady;
 
     return Column(
       children: [
-        Text('${emp['first_name']} ${emp['last_name']}',
-            style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 10),
-        Expanded(
-          child: Center(
-            child: Scrollbar(
-              controller: controller,
-              thumbVisibility: true,
-              trackVisibility: true,
-              child: SingleChildScrollView(
-                controller: controller,
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  headingRowColor:
-                      MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
-                  columns: const [
-                    DataColumn(
-                        label: Text('اليوم', style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('دخول', style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('خروج', style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('عدد الساعات', style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('سعر الساعة', style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('أجر اليوم', style: TextStyle(color: Colors.white))),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              // filters + search + refresh
+              SizedBox(
+                width: 180,
+                child: DropdownButtonFormField<int>(
+                  value: _clientFilter,
+                  decoration: const InputDecoration(labelText: 'العميل'),
+                  items: [
+                    const DropdownMenuItem(value: null, child: Text('الكل')),
+                    for (var c in _clients)
+                      DropdownMenuItem(
+                        value: c['id'] as int,
+                        child: Text(s(c['full_name'])),
+                      )
                   ],
-                  rows: rows,
+                  onChanged: (v) => setState(() => _clientFilter = v),
                 ),
               ),
-            ),
+              SizedBox(
+                width: 180,
+                child: DropdownButtonFormField<int>(
+                  value: _seasonFilter,
+                  decoration: const InputDecoration(labelText: 'الموسم'),
+                  items: [
+                    const DropdownMenuItem(value: null, child: Text('الكل')),
+                    for (var s0 in _seasons)
+                      DropdownMenuItem(
+                        value: s0['id'] as int,
+                        child: Text(s0['name']),
+                      )
+                  ],
+                  onChanged: (v) => setState(() => _seasonFilter = v),
+                ),
+              ),
+              SizedBox(
+                width: 240,
+                child: TextField(
+                  controller: _searchCtl,
+                  decoration: const InputDecoration(
+                      labelText: 'بحث', prefixIcon: Icon(Icons.search)),
+                ),
+              ),
+              IconButton(
+                tooltip: 'تحديث',
+                onPressed: _fetchReady,
+                icon: const Icon(Icons.refresh),
+              ),
+            ],
           ),
         ),
-        const Divider(),
-        Card(
-          margin: const EdgeInsets.all(8.0),
-          color: Theme.of(context).colorScheme.primary,
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Text(
-              'الإجمالي: مجموع الساعات: ${totalHours.toStringAsFixed(2)}, مجموع الأجر: ${totalSalary.toStringAsFixed(2)}',
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.bold),
+
+        // ** DataTable including new IMAGE column **
+        Expanded(
+          child: Scrollbar(
+            controller: _hReady,
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              controller: _hReady,
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 900),
+                child: Scrollbar(
+                  controller: _vReady,
+                  thumbVisibility: true,
+                  child: SingleChildScrollView(
+                    controller: _vReady,
+                    child: DataTable(
+                      headingRowColor: MaterialStateProperty.all(
+                        Theme.of(context).colorScheme.primary,
+                      ),
+                      headingTextStyle: _wh,
+                      columns: const [
+                        DataColumn(
+                            label: Text('الصورة', style: TextStyle(color: Colors.white))),
+                        DataColumn(
+                            label: Text('الموديل', style: TextStyle(color: Colors.white))),
+                        DataColumn(
+                            label: Text('النوع', style: TextStyle(color: Colors.white))),
+                        DataColumn(
+                            label: Text('التاريخ', style: TextStyle(color: Colors.white))),
+                        DataColumn(
+                            label: Text('سعر الغرزة', style: TextStyle(color: Colors.white))),
+                        DataColumn(
+                            label: Text('عدد الغرز', style: TextStyle(color: Colors.white))),
+                        DataColumn(
+                            label: Text('السعر الإجمالي', style: TextStyle(color: Colors.white))),
+                        DataColumn(
+                            label: Text('الكمية', style: TextStyle(color: Colors.white))),
+                        DataColumn(
+                            label: Text('خيارات', style: TextStyle(color: Colors.white))),
+                      ],
+                      rows: rows.map((r) {
+                        return DataRow(cells: [
+                          // ** Image cell **
+                          DataCell(
+                            GestureDetector(
+                              onTap: () => _showModelDetailsDialog(r['model_id']),
+                              child: (r['image_url'] ?? '').toString().isNotEmpty
+                                  ? Image.network(
+                                      '$_imagesBase${r['image_url']}',
+                                      width: 50,
+                                      height: 50,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) =>
+                                          const Icon(Icons.broken_image, size: 50),
+                                    )
+                                  : const Icon(Icons.image_not_supported, size: 50),
+                            ),
+                          ),
+                          DataCell(Text(s(r['model_name']))),
+                          DataCell(Text(s(r['model_type']))),
+                          DataCell(Text(formatYMD(r['model_date']))),
+                          DataCell(Text(money(r['stitch_price']))),
+                          DataCell(Text(r['stitch_number'].toString())),
+                          DataCell(Text(money(r['total_price']))),
+                          DataCell(Text(money(r['quantity']))),
+                          DataCell(Row(
+                            children: [
+                              IconButton(
+                                icon:
+                                    const Icon(Icons.visibility, color: Colors.blue),
+                                onPressed: () => _viewReady(r),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.edit, color: Colors.teal),
+                                onPressed: () =>
+                                    _editReady(r['id'], n(r['quantity'])),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete, color: Colors.red),
+                                onPressed: () => _deleteReady(r['id']),
+                              ),
+                            ],
+                          )),
+                        ]);
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ),
       ],
     );
   }
-}
 
-class _PieceAttendanceTable extends StatelessWidget {
-  final Map emp;
-  final ScrollController controller;
-  const _PieceAttendanceTable(this.emp, {required this.controller});
+  // ── UI for “المواد الخام” ───────────────────────────────────
+ Widget _rawTab() {
+    return Row(
+      textDirection: TextDirection.rtl,
+      children: [
+        // Sidebar: material types
+        Container(
+          width: 350,
+          color: Colors.grey[100],
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    Text('أنواع المواد الخام',
+                        style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.grey[800])),
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      onPressed: () => _addOrEditType(),
+                      icon: const Icon(Icons.add, color: Colors.white),
+                      label: const Text('إضافة نوع', style: TextStyle(color: Colors.white)),
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.teal[600]),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: _loadingTypes
+                    ? const Center(child: CircularProgressIndicator())
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        itemCount: _types.length,
+                        itemBuilder: (_, i) {
+                          final t = _types[i];
+                          final sel = t['id'] == _selectedTypeId;
+                          return Card(
+                            color: sel ? Colors.grey[100] : Colors.white,
+                            elevation: sel ? 3 : 1,
+                            child: ListTile(
+                              title: Text(t['name']),
+                              selected: sel,
+                              onTap: () {
+                                setState(() {
+                                  _selectedTypeId = t['id'];
+                                });
+                                _fetchMaterialsForType(t['id']);
+                              },
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                      icon: const Icon(Icons.edit, color: Colors.teal),
+                                      onPressed: () => _addOrEditType(t)),
+                                  IconButton(
+                                      icon: const Icon(Icons.delete, color: Colors.red),
+                                      onPressed: () => _deleteType(t['id'])),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              )
+            ],
+          ),
+        ),
+
+        const VerticalDivider(width: 1),
+
+        // Main materials table
+        Expanded(
+          child: _loadingMaterials
+              ? const Center(child: CircularProgressIndicator())
+              : (_selectedTypeId == null
+                  ? Center(child: Text('اختر نوع مادة من القائمة الجانبية'))
+                  : Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                          child: Row(
+                            children: [
+                              ElevatedButton.icon(
+                                onPressed: () => _addOrEditMaterial(),
+                                icon: const Icon(Icons.add),
+                                label: const Text('إضافة مادة'),
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                  onPressed: () => _fetchMaterialsForType(_selectedTypeId!),
+                                  icon: const Icon(Icons.refresh)),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: Scrollbar(
+                            controller: _hRaw,
+                            thumbVisibility: true,
+                            child: SingleChildScrollView(
+                              controller: _hRaw,
+                              scrollDirection: Axis.horizontal,
+                              child: ConstrainedBox(
+                                constraints: const BoxConstraints(minWidth: 800),
+                                child: Scrollbar(
+                                  controller: _vRaw,
+                                  thumbVisibility: true,
+                                  child: SingleChildScrollView(
+                                    controller: _vRaw,
+                                    child: DataTable(
+                                      headingRowColor: MaterialStateProperty.all(
+                                        Theme.of(context).colorScheme.primary,
+                                      ),
+                                      headingTextStyle: _wh,
+                                      columns: [
+                                        const DataColumn(label: Text('الكود')),
+                                        const DataColumn(label: Text('الكمية')),
+                                        const DataColumn(label: Text('آخر سعر')),
+                                        ..._specs
+                                            .map((s0) => DataColumn(label: Text(s0['name'])))
+                                            .toList(),
+                                        const DataColumn(label: Text('خيارات')),
+                                      ],
+                                      rows: _materials.map((m) {
+                                        final vals = m['specs'] as List;
+                                        return DataRow(cells: [
+                                          DataCell(Text(m['code'])),
+                                          DataCell(Text(money(m['stock_quantity']))),
+                                          DataCell(Text(money(m['last_unit_price']))),
+                                          ...vals
+                                              .map((v) => DataCell(Text(v['value'])))
+                                              .toList(),
+                                          DataCell(Row(
+                                            children: [
+                                              IconButton(
+                                                  icon: const Icon(Icons.edit, color: Colors.teal),
+                                                  onPressed: () => _addOrEditMaterial(m)),
+                                              IconButton(
+                                                  icon: const Icon(Icons.delete, color: Colors.red),
+                                                  onPressed: () => _deleteMaterial(m['id'])),
+                                            ],
+                                          )),
+                                        ]);
+                                      }).toList(),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    )),
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final records = List.from(emp['piece_records'] ?? []);
-    int totalQty = 0;
-    double totalPrice = 0;
-
-    final rows = records.map<DataRow>((rec) {
-      final int qty = (rec['quantity'] as num?)?.toInt() ?? 0;
-      final price = (rec['piece_price'] ?? 0).toDouble();
-      final rowTotal = qty * price;
-      totalQty += qty;
-      totalPrice += rowTotal;
-      return DataRow(cells: [
-        DataCell(Text(rec['model_name'] ?? '')),
-        DataCell(Text(qty.toString())),
-        DataCell(Text(price.toStringAsFixed(2))),
-        DataCell(Text(rowTotal.toStringAsFixed(2))),
-      ]);
-    }).toList();
-
-    return Column(
-      children: [
-        Text('${emp['first_name']} ${emp['last_name']}',
-            style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 10),
-        Expanded(
-          child: Center(
-            child: Scrollbar(
-              controller: controller,
-              thumbVisibility: true,
-              trackVisibility: true,
-              child: SingleChildScrollView(
-                controller: controller,
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  headingRowColor:
-                      MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
-                  columns: const [
-                    DataColumn(
-                        label: Text('الموديل', style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('الكمية', style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('سعر القطعة', style: TextStyle(color: Colors.white))),
-                    DataColumn(
-                        label: Text('الإجمالي', style: TextStyle(color: Colors.white))),
-                  ],
-                  rows: rows,
-                ),
-              ),
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(_tabs.length, (i) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: ChoiceChip(
+                    label: Text(_tabs[i]),
+                    selected: _tab == i,
+                    selectedColor: Theme.of(context).colorScheme.primary,
+                    labelStyle: TextStyle(
+                      color: _tab == i
+                          ? Colors.white
+                          : Theme.of(context).colorScheme.onSurface,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    onSelected: (_) => setState(() => _tab = i),
+                  ),
+                );
+              }),
             ),
           ),
-        ),
-        const Divider(),
-        Card(
-          margin: const EdgeInsets.all(8.0),
-          color: Theme.of(context).colorScheme.primary,
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Text(
-              'الإجمالي: مجموع القطع: $totalQty, مجموع السعر: ${totalPrice.toStringAsFixed(2)}',
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.bold),
-            ),
-          ),
-        ),
-      ],
+          Expanded(child: _tab == 0 ? _readyTab() : _rawTab()),
+        ],
+      ),
     );
   }
-}
-class EmployeeDialog extends StatefulWidget {
-  final Map? initial;
-  const EmployeeDialog({this.initial, super.key});
-  @override
-  State<EmployeeDialog> createState() => _EmployeeDialogState();
-}
 
-class _EmployeeDialogState extends State<EmployeeDialog> {
+  // ── Shared helpers ───────────────────────────────────────────
+  Widget _infoRow(String label, String value) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 100,
+              child: Text(
+                '$label:',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            Expanded(child: Text(value)),
+          ],
+        ),
+      );
+
+  // Add/Edit Type, Delete Type, Add/Edit Material, Delete Material,
+  // Add From Models, etc. — keep your existing implementations.
+  
+  // ── RAW MATERIALS: type management ───────────────────────────
+//   Future<void> _addOrEditType([Map<String, dynamic>? t]) async {
+//     final isEdit = t != null;
+//     final nameCtl = TextEditingController(text: t?['name'] ?? '');
+//     final specsList = t == null
+//         ? <Map<String, dynamic>>[]
+//         : (t['specs'] as List)
+//             .map((e) => {'id': e['id'], 'name': e['name']})
+//             .toList();
+
+//     await showDialog(
+//       context: context,
+//       builder: (_) => StatefulBuilder(builder: (ctx, setD) {
+//         return AlertDialog(
+//           title: Text(isEdit ? 'تعديل نوع' : 'إضافة نوع'),
+//           content: SizedBox(
+//             width: 320,
+//             child: Column(
+//               mainAxisSize: MainAxisSize.min,
+//               children: [
+//                 TextField(
+//                   controller: nameCtl,
+//                   decoration: const InputDecoration(labelText: 'اسم النوع'),
+//                 ),
+//                 const SizedBox(height: 12),
+//                 Row(
+//                   children: [
+//                     const Text('المواصفات', style: TextStyle(fontWeight: FontWeight.bold)),
+//                     const Spacer(),
+//                     IconButton(
+//                         icon: const Icon(Icons.add),
+//                         onPressed: () => setD(() => specsList.add({'name': ''}))),
+//                   ],
+//                 ),
+//                 ...specsList.asMap().entries.map((e) {
+//                   final i = e.key;
+//                   return Row(
+//                     children: [
+//                       Expanded(
+//                         child: TextField(
+//                           controller: TextEditingController(text: specsList[i]['name']),
+//                           onChanged: (v) => specsList[i]['name'] = v,
+//                           decoration: const InputDecoration(labelText: 'اسم المواصفة'),
+//                         ),
+//                       ),
+//                       IconButton(
+//                           icon: const Icon(Icons.delete),
+//                           onPressed: () => setD(() => specsList.removeAt(i))),
+//                     ],
+//                   );
+//                 }),
+//               ],
+//             ),
+//           ),
+//           actions: [
+//             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+//             ElevatedButton(
+//               onPressed: () async {
+//                 final body = jsonEncode({
+//                   'name': nameCtl.text.trim(),
+//                   'specs': specsList
+//                       .where((s) => (s['name'] as String).trim().isNotEmpty)
+//                       .toList(),
+//                 });
+//                 final url = isEdit
+//                     ? '$_warehouseBase/material-types/${t!['id']}'
+//                     : '$_warehouseBase/material-types';
+//                 final r = isEdit
+//                     ? await http.put(Uri.parse(url),
+//                         headers: {'Content-Type': 'application/json'}, body: body)
+//                     : await http.post(Uri.parse(url),
+//                         headers: {'Content-Type': 'application/json'}, body: body);
+//                 if (r.statusCode == 200) {
+//                   Navigator.pop(ctx);
+//                   _fetchTypes();
+//                 }
+//               },
+//               child: const Text('حفظ'),
+//             ),
+//           ],
+//         );
+//       }),
+//     );
+//   }
+
+  Future<void> _deleteType(int id) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: const Text('هل أنت متأكد؟'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('حذف')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await http.delete(Uri.parse('$_warehouseBase/material-types/$id'));
+      _fetchTypes();
+    }
+  }
+// 1) Add/Edit Material Type – requires a non‑empty name and ≥1 spec
+Future<void> _addOrEditType([Map<String, dynamic>? t]) async {
+  final isEdit = t != null;
   final _formKey = GlobalKey<FormState>();
-  late TextEditingController firstName,
-      lastName,
-      phone,
-      address,
-      salary,
-      photoUrl;
-  String sellerType = 'month';
-  String? role;
+  final nameCtl = TextEditingController(text: t?['name'] ?? '');
+  // start with one empty spec when creating
+  final specsList = t == null
+      ? <Map<String, String>>[{'name': ''}]
+      : List<Map<String, String>>.from(
+          (t['specs'] as List).map((e) => {'name': e['name'] as String}));
 
-  static const monthlyRoles = ['خياطة', 'فينيسيون'];
-  static const pieceRoles = ['كوي', 'خياطة', 'قص'];
+  await showDialog(
+    context: context,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setD) {
+          return AlertDialog(
+            title: Text(isEdit ? 'تعديل نوع مادة' : 'إضافة نوع مادة'),
+            content: Form(
+              key: _formKey,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 1) Name field
+                    TextFormField(
+                      controller: nameCtl,
+                      decoration: const InputDecoration(labelText: 'اسم النوع'),
+                      validator: (v) =>
+                          v == null || v.trim().isEmpty ? 'اسم النوع مطلوب' : null,
+                    ),
+                    const SizedBox(height: 16),
+                    // 2) Specs header + add button
+                    Row(
+                      children: [
+                        const Text('المواصفات',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.add),
+                          onPressed: () {
+                            setD(() => specsList.add({'name': ''}));
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    // 3) One TextFormField per spec
+                    ...specsList.asMap().entries.map((entry) {
+                      final idx = entry.key;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                initialValue: specsList[idx]['name'],
+                                decoration: const InputDecoration(
+                                    labelText: 'اسم المواصفة'),
+                                onChanged: (v) => specsList[idx]['name'] = v,
+                                validator: (v) => v == null || v.trim().isEmpty
+                                    ? 'أدخل اسم مواصفة'
+                                    : null,
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete),
+                              onPressed: () {
+                                setD(() => specsList.removeAt(idx));
+                              },
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إلغاء'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  // validate form and at least one spec
+                  if (!_formKey.currentState!.validate()) return;
+                  if (specsList.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content:
+                            Text('أضف مواصفة واحدة على الأقل'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                    return;
+                  }
+                  // prepare payload
+                  final payload = {
+                    'name': nameCtl.text.trim(),
+                    'specs': specsList
+                        .map((s) => {'name': s['name']!.trim()})
+                        .toList(),
+                  };
+                  final url = isEdit
+                      ? '$_warehouseBase/material-types/${t!['id']}'
+                      : '$_warehouseBase/material-types';
+                  final res = isEdit
+                      ? await http.put(
+                          Uri.parse(url),
+                          headers: {'Content-Type': 'application/json'},
+                          body: jsonEncode(payload),
+                        )
+                      : await http.post(
+                          Uri.parse(url),
+                          headers: {'Content-Type': 'application/json'},
+                          body: jsonEncode(payload),
+                        );
+                  if (res.statusCode == 200) {
+                    Navigator.pop(context);
+                    await _fetchTypes();
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('فشل الحفظ (#${res.statusCode})'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                },
+                child: const Text('حفظ'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
 
-  @override
-  void initState() {
-    super.initState();
-    final init = widget.initial ?? {};
-    firstName =
-        TextEditingController(text: init['first_name'] ?? '');
-    lastName =
-        TextEditingController(text: init['last_name'] ?? '');
-    phone = TextEditingController(text: init['phone'] ?? '');
-    address =
-        TextEditingController(text: init['address'] ?? '');
-    salary =
-        TextEditingController(text: init['salary']?.toString() ?? '');
-    photoUrl =
-        TextEditingController(text: init['photo_url'] ?? '');
-    sellerType = init['seller_type'] ?? 'month';
-    role = init['role'] ??
-        (sellerType == 'month'
-            ? monthlyRoles.first
-            : pieceRoles.first);
-  }
 
-  @override
-  Widget build(BuildContext context) {
-    final isMonthly = sellerType == 'month';
-    final allowedRoles =
-        isMonthly ? monthlyRoles : pieceRoles;
+// 2) Import from Models – requires pick + positive qty
+Future<void> _addFromModelDialog() async {
+  final _formKey = GlobalKey<FormState>();
+  List<Map<String, dynamic>> models = [];
+  bool loading = true, firstLoad = true;
+  String? err;
+  int? modelId;
+  double qty = 0;
+  final qtyCtl = TextEditingController();
 
-    return AlertDialog(
-      title: Text(widget.initial == null
-          ? 'إضافة عامل'
-          : 'تعديل بيانات العامل'),
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(builder: (ctx, setD) {
+      if (firstLoad) {
+        firstLoad = false;
+        http.get(Uri.parse(_modelsBase)).then((r) {
+          if (r.statusCode == 200) {
+            models = List<Map<String, dynamic>>.from(jsonDecode(r.body));
+          } else {
+            err = 'فشل التحميل (#${r.statusCode})';
+          }
+          loading = false;
+          setD(() {});
+        }).catchError((e) {
+          err = 'خطأ $e';
+          loading = false;
+          setD(() {});
+        });
+      }
+
+      return AlertDialog(
+        title: const Text('إضافة من الموديلات'),
+        content: Form(
+          key: _formKey,
+          child: SizedBox(
+            width: 360,
+            child: loading
+                ? const Center(child: CircularProgressIndicator())
+                : err != null
+                    ? Text(err!, style: const TextStyle(color: Colors.red))
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          DropdownButtonFormField<int>(
+                            value: modelId,
+                            decoration: const InputDecoration(labelText: 'اختر الموديل'),
+                            items: models
+                                .map((m) => DropdownMenuItem<int>(
+                                      value: m['id'] as int,
+                                      child: Text('${m['model_name']} (#${m['id']})'),
+                                    ))
+                                .toList(),
+                            onChanged: (v) => setD(() => modelId = v),
+                            validator: (v) => v == null ? 'اختر الموديل' : null,
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: qtyCtl,
+                            decoration: const InputDecoration(labelText: 'الكمية'),
+                            keyboardType: TextInputType.number,
+                            onChanged: (v) => qty = double.tryParse(v) ?? 0,
+                            validator: (v) {
+                              final n = double.tryParse(v ?? '') ?? 0;
+                              return n <= 0 ? 'أدخل قيمة كمية صالحة' : null;
+                            },
+                          ),
+                        ],
+                      ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          ElevatedButton(
+            onPressed: () async {
+              if (!_formKey.currentState!.validate()) return;
+              final body = jsonEncode({
+                'warehouse_id': 1,
+                'model_id': modelId,
+                'quantity': qty,
+              });
+              final res = await http.post(
+                Uri.parse('$_warehouseBase/product-inventory'),
+                headers: {'Content-Type': 'application/json'},
+                body: body,
+              );
+              if (res.statusCode == 200) {
+                Navigator.pop(context);
+                await _fetchReady();
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('فشل الإضافة (#${res.statusCode})'), backgroundColor: Colors.red),
+                );
+              }
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      );
+    }),
+  );
+}
+
+// 3) Add/Edit Raw Material – requires non‑empty code & each spec
+Future<void> _addOrEditMaterial([Map<String, dynamic>? m]) async {
+  final isEdit = m != null;
+  final _formKey = GlobalKey<FormState>();
+  final codeCtl = TextEditingController(text: m?['code'] ?? '');
+  final vals = m == null
+      ? _specs
+          .map((s0) => {'spec_id': s0['id'], 'spec_name': s0['name'], 'value': ''})
+          .toList()
+      : List<Map<String, dynamic>>.from(m['specs'] as List);
+
+  await showDialog(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: Text(isEdit ? 'تعديل مادة' : 'إضافة مادة'),
       content: Form(
         key: _formKey,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: RadioListTile<String>(
-                      title: const Text('شهرياً'),
-                      value: 'month',
-                      groupValue: sellerType,
-                      onChanged: (v) => setState(() {
-                        sellerType = v!;
-                        role = monthlyRoles.first;
-                      }),
-                    ),
+              // Code
+              TextFormField(
+                controller: codeCtl,
+                decoration: const InputDecoration(labelText: 'الكود'),
+                validator: (v) =>
+                    v == null || v.trim().isEmpty ? 'الكود مطلوب' : null,
+              ),
+              const SizedBox(height: 12),
+              // One field per spec
+              ...vals.asMap().entries.map((entry) {
+                final i = entry.key;
+                final spec = vals[i];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: TextFormField(
+                    initialValue: spec['value'] as String?,
+                    decoration: InputDecoration(labelText: spec['spec_name']),
+                    onChanged: (t) => spec['value'] = t,
+                    validator: (v) =>
+                        v == null || v.trim().isEmpty ? 'الرجاء إدخال ${spec['spec_name']}' : null,
                   ),
-                  Expanded(
-                    child: RadioListTile<String>(
-                      title: const Text('قطعة'),
-                      value: 'piece',
-                      groupValue: sellerType,
-                      onChanged: (v) => setState(() {
-                        sellerType = v!;
-                        role = pieceRoles.first;
-                      }),
-                    ),
-                  ),
-                ],
-              ),
-              TextFormField(
-                controller: firstName,
-                decoration:
-                    const InputDecoration(labelText: 'الاسم الأول'),
-                validator: (v) => v == null || v.isEmpty
-                    ? 'مطلوب'
-                    : null,
-              ),
-              TextFormField(
-                controller: lastName,
-                decoration:
-                    const InputDecoration(labelText: 'الاسم الأخير'),
-                validator: (v) => v == null || v.isEmpty
-                    ? 'مطلوب'
-                    : null,
-              ),
-              TextFormField(
-                controller: phone,
-                decoration:
-                    const InputDecoration(labelText: 'رقم الجوال'),
-                validator: (v) => v == null || v.isEmpty
-                    ? 'مطلوب'
-                    : null,
-              ),
-              TextFormField(
-                controller: address,
-                decoration:
-                    const InputDecoration(labelText: 'العنوان'),
-                validator: (v) => v == null || v.isEmpty
-                    ? 'مطلوب'
-                    : null,
-              ),
-              if (isMonthly)
-                TextFormField(
-                  controller: salary,
-                  decoration:
-                      const InputDecoration(labelText: 'الراتب الشهري'),
-                  keyboardType: TextInputType.number,
-                  validator: (v) => v == null || v.isEmpty
-                      ? 'مطلوب'
-                      : null,
-                ),
-              DropdownButtonFormField<String>(
-                value: role,
-                decoration:
-                    const InputDecoration(labelText: 'المهنه'),
-                items: allowedRoles
-                    .map((r) => DropdownMenuItem<String>(
-                          value: r,
-                          child: Text(r),
-                        ))
-                    .toList(),
-                onChanged: (v) => setState(() => role = v),
-                validator: (v) => v == null ? 'مطلوب' : null,
-              ),
-              TextFormField(
-                controller: photoUrl,
-                decoration:
-                    const InputDecoration(labelText: 'رابط الصورة (اختياري)'),
-              ),
+                );
+              }).toList(),
             ],
           ),
         ),
       ),
       actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء')),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
         ElevatedButton(
-          child: const Text('حفظ'),
-          onPressed: () {
-            if (_formKey.currentState!.validate()) {
-              Navigator.pop<Map>(context, {
-                'first_name': firstName.text.trim(),
-                'last_name': lastName.text.trim(),
-                'phone': phone.text.trim(),
-                'address': address.text.trim(),
-                'seller_type': sellerType,
-                'salary': isMonthly
-                    ? double.tryParse(salary.text) ?? 0
-                    : null,
-                'role': role,
-                'photo_url': photoUrl.text.trim().isEmpty
-                    ? null
-                    : photoUrl.text.trim(),
-              });
+          onPressed: () async {
+            if (!_formKey.currentState!.validate()) return;
+            final payload = {
+              'type_id': _selectedTypeId,
+              'code': codeCtl.text.trim(),
+              'specs': vals
+                  .map((e) => {'spec_id': e['spec_id'], 'value': e['value'].toString().trim()})
+                  .toList(),
+            };
+            final url = isEdit
+                ? '$_warehouseBase/materials/${m!['id']}'
+                : '$_warehouseBase/materials';
+            final res = isEdit
+                ? await http.put(Uri.parse(url),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(payload))
+                : await http.post(Uri.parse(url),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(payload));
+            if (res.statusCode == 200) {
+              Navigator.pop(context);
+              await _fetchMaterialsForType(_selectedTypeId!);
             }
           },
+          child: const Text('حفظ'),
         ),
       ],
-    );
-  }
+    ),
+  );
 }
-// ... [CUT: rest of unchanged code, EmployeeDialog, etc.] ...
+
+// 4) Add/Edit Ready‑Product – requires model ID + positive qty
+Future<void> _addOrEditReady([Map<String, dynamic>? p]) async {
+  final isEdit = p != null;
+  final _formKey = GlobalKey<FormState>();
+  final modelCtl = TextEditingController(text: p?['model_id']?.toString() ?? '');
+  final qtyCtl = TextEditingController(text: p?['quantity']?.toString() ?? '');
+
+  await showDialog(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: Text(isEdit ? 'تعديل المنتج' : 'إضافة منتج'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Model ID
+            TextFormField(
+              controller: modelCtl,
+              decoration: const InputDecoration(labelText: 'معرف الموديل'),
+              keyboardType: TextInputType.number,
+              validator: (v) {
+                final id = int.tryParse(v ?? '');
+                return id == null ? 'أدخل معرف موديل صالح' : null;
+              },
+            ),
+            const SizedBox(height: 8),
+            // Quantity
+            TextFormField(
+              controller: qtyCtl,
+              decoration: const InputDecoration(labelText: 'الكمية'),
+              keyboardType: TextInputType.number,
+              validator: (v) {
+                final n = double.tryParse(v ?? '') ?? 0;
+                return n <= 0 ? 'أدخل كمية صالحة' : null;
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+        ElevatedButton(
+          onPressed: () async {
+            if (!_formKey.currentState!.validate()) return;
+            final body = jsonEncode({
+              'warehouse_id': 1,
+              'model_id': int.parse(modelCtl.text),
+              'quantity': double.parse(qtyCtl.text),
+            });
+            final url = isEdit
+                ? '$_warehouseBase/product-inventory/${p!['id']}'
+                : '$_warehouseBase/product-inventory';
+            final res = isEdit
+                ? await http.put(Uri.parse(url), headers: {'Content-Type': 'application/json'}, body: body)
+                : await http.post(Uri.parse(url), headers: {'Content-Type': 'application/json'}, body: body);
+            if (res.statusCode == 200) {
+              Navigator.pop(context);
+              await _fetchReady();
+            }
+          },
+          child: const Text('حفظ'),
+        ),
+      ],
+    ),
+  );
+}
+
+  // ── RAW MATERIALS: material management ───────────────────────
+//   Future<void> _addOrEditMaterial([Map<String, dynamic>? m]) async {
+//     final isEdit = m != null;
+//     final codeCtl = TextEditingController(text: m?['code'] ?? '');
+//     final stockCtl = TextEditingController(text: s(m?['stock_quantity']));
+//     final vals = m == null
+//         ? _specs
+//             .map((s0) => {'spec_id': s0['id'], 'spec_name': s0['name'], 'value': ''})
+//             .toList()
+//         : List<Map<String, dynamic>>.from(m['specs'] as List);
+
+//     await showDialog(
+//       context: context,
+//       builder: (_) => StatefulBuilder(builder: (ctx, setD) {
+//         return AlertDialog(
+//           title: Text(isEdit ? 'تعديل مادة' : 'إضافة مادة'),
+//           content: SingleChildScrollView(
+//             child: Column(
+//               mainAxisSize: MainAxisSize.min,
+//               children: [
+//                 TextField(controller: codeCtl, decoration: const InputDecoration(labelText: 'الكود')),
+//                 TextField(
+//                   controller: stockCtl,
+//                   decoration: const InputDecoration(labelText: 'الكمية'),
+//                   keyboardType: TextInputType.number,
+//                 ),
+//                 const SizedBox(height: 12),
+//                 ...vals.map((v) => TextField(
+//                       controller: TextEditingController(text: v['value']),
+//                       decoration: InputDecoration(labelText: v['spec_name']),
+//                       onChanged: (t) => v['value'] = t,
+//                     )),
+//               ],
+//             ),
+//           ),
+//           actions: [
+//             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+//             ElevatedButton(
+//               onPressed: () async {
+//                 final body = jsonEncode({
+//                   'type_id': _selectedTypeId,
+//                   'code': codeCtl.text,
+//                   'stock_quantity': double.tryParse(stockCtl.text) ?? 0,
+//                   'specs': vals
+//                       .map((e) => {'spec_id': e['spec_id'], 'value': e['value']})
+//                       .toList(),
+//                 });
+//                 final url = isEdit
+//                     ? '$_warehouseBase/materials/${m!['id']}'
+//                     : '$_warehouseBase/materials';
+//                 final r = isEdit
+//                     ? await http.put(Uri.parse(url),
+//                         headers: {'Content-Type': 'application/json'}, body: body)
+//                     : await http.post(Uri.parse(url),
+//                         headers: {'Content-Type': 'application/json'}, body: body);
+//                 if (r.statusCode == 200) {
+//                   Navigator.pop(ctx);
+//                   _fetchMaterialsForType(_selectedTypeId!);
+//                 }
+//               },
+//               child: const Text('حفظ'),
+//             ),
+//           ],
+//         );
+//       }),
+//     );
+//   }
+
+  Future<void> _deleteMaterial(int id) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: const Text('هل أنت متأكد؟'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('حذف')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await http.delete(Uri.parse('$_warehouseBase/materials/$id'));
+      _fetchMaterialsForType(_selectedTypeId!);
+    }
+  }
+
+}
+
+// White header text style shortcut
+const _wh = TextStyle(color: Colors.white, fontWeight: FontWeight.bold);
