@@ -35,7 +35,7 @@ Router getEmbroiderySalesRoutes(PostgreSQLConnection db) {
   final router = Router();
 
   // ======================== MODELS (for sidebar) ========================
-  router.get('/models', (Request req) async {
+ router.get('/models', (Request req) async {
     try {
       final rows = await db.query('''
         SELECT
@@ -44,14 +44,15 @@ Router getEmbroiderySalesRoutes(PostgreSQLConnection db) {
           m.stitch_price,
           COALESCE(SUM(pi.quantity), 0) AS available_quantity,
           m.stitch_number,
-          m.model_type
+          m.model_type,
+          m.image_url
         FROM embroidery.models m
         LEFT JOIN embroidery.product_inventory pi
           ON pi.model_id = m.id
           AND pi.warehouse_id = (
             SELECT id FROM embroidery.warehouses WHERE type='ready' LIMIT 1
           )
-        GROUP BY m.id, m.model_name, m.stitch_price, m.stitch_number, m.model_type
+        GROUP BY m.id, m.model_name, m.stitch_price, m.stitch_number, m.model_type, m.image_url
         ORDER BY m.model_name
       ''');
 
@@ -62,6 +63,7 @@ Router getEmbroiderySalesRoutes(PostgreSQLConnection db) {
             'available_quantity': _parseInt(r[3]),
             'stitch_number': _parseInt(r[4]),
             'model_type': r[5] as String,
+            'image_url': r[6] as String?,
           }).toList();
 
       return _okJson(list);
@@ -133,108 +135,109 @@ Router getEmbroiderySalesRoutes(PostgreSQLConnection db) {
   });
 
   // ======================== FACTURE DETAILS ========================
-  router.get('/factures/<fid|[0-9]+>', (Request req, String fid) async {
-    try {
-      final factureId = int.parse(fid);
+router.get('/factures/<fid|[0-9]+>', (Request req, String fid) async {
+  try {
+    final factureId = int.parse(fid);
 
-      // Header
-      final fRow = await db.query('''
-        SELECT f.id, f.facture_date, f.total_amount, f.amount_paid_on_creation,
-               c.full_name, c.phone, c.address
-        FROM embroidery.factures f
-        JOIN embroidery.clients c ON f.client_id = c.id
-        WHERE f.id = @id
-      ''', substitutionValues: {'id': factureId});
-      if (fRow.isEmpty) {
-        return Response.notFound(jsonEncode({'error': 'Not found'}),
-            headers: {'Content-Type': 'application/json'});
-      }
-      final f = fRow.first;
+    // Header
+    final fRow = await db.query('''
+      SELECT f.id, f.facture_date, f.total_amount, f.amount_paid_on_creation,
+             c.full_name, c.phone, c.address
+      FROM embroidery.factures f
+      JOIN embroidery.clients c ON f.client_id = c.id
+      WHERE f.id = @id
+    ''', substitutionValues: {'id': factureId});
+    if (fRow.isEmpty) {
+      return Response.notFound(jsonEncode({'error': 'Not found'}),
+          headers: {'Content-Type': 'application/json'});
+    }
+    final f = fRow.first;
 
-      // Payments
-      final payRows = await db.query('''
-        SELECT amount_paid, payment_date
-        FROM embroidery.facture_payments
-        WHERE facture_id = @id
-        ORDER BY payment_date
-      ''', substitutionValues: {'id': factureId});
-      final payments = payRows
-          .map((r) => {
-                'amount_paid': _parseNum(r[0]),
-                'payment_date': r[1].toString(),
-              })
-          .toList();
+    // Payments
+    final payRows = await db.query('''
+      SELECT amount_paid, payment_date
+      FROM embroidery.facture_payments
+      WHERE facture_id = @id
+      ORDER BY payment_date
+    ''', substitutionValues: {'id': factureId});
+    final payments = payRows
+        .map((r) => {
+              'amount_paid': _parseNum(r[0]),
+              'payment_date': r[1].toString(),
+            })
+        .toList();
 
-      // Items
-      final itemRows = await db.query('''
-        SELECT fi.id, fi.model_id, m.model_name, fi.quantity, fi.unit_price,
-               COALESCE(fi.color, '—'), m.stitch_number, m.model_type
-        FROM embroidery.facture_items fi
-        JOIN embroidery.models m ON fi.model_id = m.id
-        WHERE fi.facture_id = @id
-      ''', substitutionValues: {'id': factureId});
-      final items = itemRows.map((r) {
-        final qty = _parseInt(r[3]);
-        final unit = _parseNum(r[4]);
-        return {
+    // Items
+    final itemRows = await db.query('''
+      SELECT fi.id, fi.model_id, m.model_name, fi.quantity, fi.unit_price,
+             COALESCE(fi.color, '—'), m.stitch_number, m.model_type, m.image_url
+      FROM embroidery.facture_items fi
+      JOIN embroidery.models m ON fi.model_id = m.id
+      WHERE fi.facture_id = @id
+    ''', substitutionValues: {'id': factureId});
+    final items = itemRows.map((r) {
+      final qty = _parseInt(r[3]);
+      final unit = _parseNum(r[4]);
+      return {
+        'id': _parseInt(r[0]),
+        'model_id': _parseInt(r[1]),
+        'model_name': r[2],
+        'quantity': qty,
+        'unit_price': unit,
+        'color': r[5],
+        'stitch_number': _parseInt(r[6]),
+        'model_type': r[7],
+        'image_url': r[8] as String?,
+        'line_total': qty * unit,
+      };
+    }).toList();
+
+    // Returns
+    final returnRows = await db.query('''
+      SELECT r.id, r.model_id, m.model_name, r.quantity, r.return_date,
+             r.is_ready_to_sell, r.repair_cost, r.notes
+      FROM embroidery.returns r
+      JOIN embroidery.models m ON r.model_id = m.id
+      WHERE r.facture_id = @id
+      ORDER BY r.return_date DESC
+    ''', substitutionValues: {'id': factureId});
+    final returns = returnRows.map((r) => {
           'id': _parseInt(r[0]),
           'model_id': _parseInt(r[1]),
           'model_name': r[2],
-          'quantity': qty,
-          'unit_price': unit,
-          'color': r[5],
-          'stitch_number': _parseInt(r[6]),
-          'model_type': r[7],
-          'line_total': qty * unit,
-        };
-      }).toList();
+          'quantity': _parseInt(r[3]),
+          'return_date': r[4].toString(),
+          'is_ready_to_sell': r[5] as bool,
+          'repair_cost': _parseNum(r[6]),
+          'notes': r[7] ?? '',
+        }).toList();
 
-      // Returns
-      final returnRows = await db.query('''
-        SELECT r.id, r.model_id, m.model_name, r.quantity, r.return_date,
-               r.is_ready_to_sell, r.repair_cost, r.notes
-        FROM embroidery.returns r
-        JOIN embroidery.models m ON r.model_id = m.id
-        WHERE r.facture_id = @id
-        ORDER BY r.return_date DESC
-      ''', substitutionValues: {'id': factureId});
-      final returns = returnRows.map((r) => {
-            'id': _parseInt(r[0]),
-            'model_id': _parseInt(r[1]),
-            'model_name': r[2],
-            'quantity': _parseInt(r[3]),
-            'return_date': r[4].toString(),
-            'is_ready_to_sell': r[5] as bool,
-            'repair_cost': _parseNum(r[6]),
-            'notes': r[7] ?? '',
-          }).toList();
+    final paidOnCreation = _parseNum(f[3]);
+    final extraPaid =
+        payments.fold<double>(0, (s, p) => s + _parseNum(p['amount_paid']));
+    final totalPaid = paidOnCreation + extraPaid;
+    final totalAmount = _parseNum(f[2]);
+    final remaining = totalAmount - totalPaid;
 
-      final paidOnCreation = _parseNum(f[3]);
-      final extraPaid =
-          payments.fold<double>(0, (s, p) => s + _parseNum(p['amount_paid']));
-      final totalPaid = paidOnCreation + extraPaid;
-      final totalAmount = _parseNum(f[2]);
-      final remaining = totalAmount - totalPaid;
-
-      return _okJson({
-        'id': f[0],
-        'facture_date': f[1].toString(),
-        'total_amount': totalAmount,
-        'amount_paid_on_creation': paidOnCreation,
-        'client_name': f[4],
-        'client_phone': f[5],
-        'client_address': f[6],
-        'payments': payments,
-        'total_paid': totalPaid,
-        'remaining_amount': remaining,
-        'items': items,
-        'returns': returns,
-      });
-    } catch (e, st) {
-      print('FACTURE DETAIL ERROR: $e\n$st');
-      return _errJson({'error': 'Failed to fetch details', 'details': e.toString()});
-    }
-  });
+    return _okJson({
+      'id': f[0],
+      'facture_date': f[1].toString(),
+      'total_amount': totalAmount,
+      'amount_paid_on_creation': paidOnCreation,
+      'client_name': f[4],
+      'client_phone': f[5],
+      'client_address': f[6],
+      'payments': payments,
+      'total_paid': totalPaid,
+      'remaining_amount': remaining,
+      'items': items,
+      'returns': returns,
+    });
+  } catch (e, st) {
+    print('FACTURE DETAIL ERROR: $e\n$st');
+    return _errJson({'error': 'Failed to fetch details', 'details': e.toString()});
+  }
+});
 
   // ======================== CREATE FACTURE + FIFO ========================
   router.post('/factures', (Request req) async {
@@ -473,87 +476,87 @@ router.delete('/factures/<fid|[0-9]+>', (Request req, String fid) async {
 
   // ======================== CLIENT FACTURES ========================
   router.get('/clients/<cid|[0-9]+>/factures', (Request req, String cid) async {
-    try {
-      final clientId = int.parse(cid);
-      final factRows = await db.query('''
-        SELECT f.id, f.facture_date, f.total_amount, f.amount_paid_on_creation,
-               COALESCE(SUM(fp.amount_paid),0) AS paid,
-               (f.total_amount - f.amount_paid_on_creation 
-                - COALESCE(SUM(fp.amount_paid),0)) AS remaining
-        FROM embroidery.factures f
-        LEFT JOIN embroidery.facture_payments fp
-          ON f.id=fp.facture_id
-        WHERE f.client_id=@cid
-        GROUP BY f.id
-        ORDER BY f.facture_date DESC, f.id DESC
-      ''', substitutionValues: {'cid': clientId});
+  try {
+    final clientId = int.parse(cid);
+    final factRows = await db.query('''
+      SELECT f.id, f.facture_date, f.total_amount, f.amount_paid_on_creation,
+             COALESCE(SUM(fp.amount_paid),0) AS paid,
+             (f.total_amount - f.amount_paid_on_creation 
+              - COALESCE(SUM(fp.amount_paid),0)) AS remaining
+      FROM embroidery.factures f
+      LEFT JOIN embroidery.facture_payments fp
+        ON f.id=fp.facture_id
+      WHERE f.client_id=@cid
+      GROUP BY f.id
+      ORDER BY f.facture_date DESC, f.id DESC
+    ''', substitutionValues: {'cid': clientId});
 
-      final result = <Map<String, dynamic>>[];
+    final result = <Map<String, dynamic>>[];
 
-      for (final f in factRows) {
-        final items = await db.query('''
-          SELECT fi.id, fi.model_id, m.model_name, fi.quantity, fi.unit_price,
-                 COALESCE(fi.color, '—'), m.stitch_number, m.model_type
-          FROM embroidery.facture_items fi
-          JOIN embroidery.models m ON fi.model_id=m.id
-          WHERE fi.facture_id=@fid
-        ''', substitutionValues: {'fid': f[0]});
+    for (final f in factRows) {
+      final items = await db.query('''
+        SELECT fi.id, fi.model_id, m.model_name, fi.quantity, fi.unit_price,
+               COALESCE(fi.color, '—'), m.stitch_number, m.model_type, m.image_url
+        FROM embroidery.facture_items fi
+        JOIN embroidery.models m ON fi.model_id=m.id
+        WHERE fi.facture_id=@fid
+      ''', substitutionValues: {'fid': f[0]});
 
-        final itemList = items.map((r) {
-          final qty = _parseInt(r[3]);
-          final up = _parseNum(r[4]);
-          return {
+      final itemList = items.map((r) {
+        final qty = _parseInt(r[3]);
+        final up = _parseNum(r[4]);
+        return {
+          'id': _parseInt(r[0]),
+          'model_id': _parseInt(r[1]),
+          'model_name': r[2],
+          'quantity': qty,
+          'unit_price': up,
+          'color': r[5],
+          'stitch_number': _parseInt(r[6]),
+          'model_type': r[7],
+          'image_url': r[8] as String?,
+          'line_total': qty * up,
+        };
+      }).toList();
+
+      final returnRows = await db.query('''
+        SELECT r.id, r.model_id, m.model_name, r.quantity, r.return_date,
+               r.is_ready_to_sell, r.repair_cost, r.notes
+        FROM embroidery.returns r
+        JOIN embroidery.models m ON r.model_id = m.id
+        WHERE r.facture_id = @fid
+        ORDER BY r.return_date DESC
+      ''', substitutionValues: {'fid': f[0]});
+
+      final returns = returnRows.map((r) => {
             'id': _parseInt(r[0]),
             'model_id': _parseInt(r[1]),
             'model_name': r[2],
-            'quantity': qty,
-            'unit_price': up,
-            'color': r[5],
-            'stitch_number': _parseInt(r[6]),
-            'model_type': r[7],
-            'line_total': qty * up,
-          };
-        }).toList();
+            'quantity': _parseInt(r[3]),
+            'return_date': r[4].toString(),
+            'is_ready_to_sell': r[5] as bool,
+            'repair_cost': _parseNum(r[6]),
+            'notes': r[7] ?? '',
+          }).toList();
 
-        final returnRows = await db.query('''
-          SELECT r.id, r.model_id, m.model_name, r.quantity, r.return_date,
-                 r.is_ready_to_sell, r.repair_cost, r.notes
-          FROM embroidery.returns r
-          JOIN embroidery.models m ON r.model_id = m.id
-          WHERE r.facture_id = @fid
-          ORDER BY r.return_date DESC
-        ''', substitutionValues: {'fid': f[0]});
-
-        final returns = returnRows.map((r) => {
-              'id': _parseInt(r[0]),
-              'model_id': _parseInt(r[1]),
-              'model_name': r[2],
-              'quantity': _parseInt(r[3]),
-              'return_date': r[4].toString(),
-              'is_ready_to_sell': r[5] as bool,
-              'repair_cost': _parseNum(r[6]),
-              'notes': r[7] ?? '',
-            }).toList();
-
-        result.add({
-          'id': f[0],
-    
-          'facture_date': f[1].toString(),
-          'total_amount': _parseNum(f[2]),
-          'amount_paid_on_creation': _parseNum(f[3]),
-          'total_paid': _parseNum(f[3]) + _parseNum(f[4]),
-          'remaining_amount': _parseNum(f[5]),
-          'items': itemList,
-          'returns': returns,
-        });
-      }
-
-      return _okJson(result);
-    } catch (e, st) {
-      print('CLIENT FACTURES ERROR: $e\n$st');
-      return _errJson({'error': 'Failed to fetch client factures', 'details': e.toString()});
+      result.add({
+        'id': f[0],
+        'facture_date': f[1].toString(),
+        'total_amount': _parseNum(f[2]),
+        'amount_paid_on_creation': _parseNum(f[3]),
+        'total_paid': _parseNum(f[3]) + _parseNum(f[4]),
+        'remaining_amount': _parseNum(f[5]),
+        'items': itemList,
+        'returns': returns,
+      });
     }
-  });
+
+    return _okJson(result);
+  } catch (e, st) {
+    print('CLIENT FACTURES ERROR: $e\n$st');
+    return _errJson({'error': 'Failed to fetch client factures', 'details': e.toString()});
+  }
+});
 
   // ======================== CLIENT TRANSACTIONS (with date filter) ========================
   router.get('/clients/<cid|[0-9]+>/transactions',
@@ -794,40 +797,42 @@ router.delete('/factures/<fid|[0-9]+>', (Request req, String fid) async {
   });
 
   router.get('/models/by_season/<sid|[0-9]+>', (Request req, String sid) async {
-    try {
-      final seasonId = int.parse(sid);
-       final rows = await db.query('''
-        SELECT
-          m.id,
-          m.model_name,
-          m.stitch_price,
-          COALESCE(SUM(pi.quantity),0) AS available_quantity
-        FROM embroidery.models m
-        JOIN embroidery.seasons s
-          ON m.model_date BETWEEN s.start_date AND s.end_date
-        LEFT JOIN embroidery.product_inventory pi
-          ON pi.model_id=m.id
-          AND pi.warehouse_id=(
-            SELECT id FROM embroidery.warehouses WHERE type='ready' LIMIT 1
-          )
-        WHERE s.id=@sid
-        GROUP BY m.id, m.model_name, m.stitch_price
-        ORDER BY m.model_name
-      ''', substitutionValues: {'sid': seasonId});
+  try {
+    final seasonId = int.parse(sid);
+    final rows = await db.query('''
+      SELECT
+        m.id,
+        m.model_name,
+        m.stitch_price,
+        COALESCE(SUM(pi.quantity),0) AS available_quantity,
+        m.image_url
+      FROM embroidery.models m
+      JOIN embroidery.seasons s
+        ON m.model_date BETWEEN s.start_date AND s.end_date
+      LEFT JOIN embroidery.product_inventory pi
+        ON pi.model_id=m.id
+        AND pi.warehouse_id=(
+          SELECT id FROM embroidery.warehouses WHERE type='ready' LIMIT 1
+        )
+      WHERE s.id=@sid
+      GROUP BY m.id, m.model_name, m.stitch_price, m.image_url
+      ORDER BY m.model_name
+    ''', substitutionValues: {'sid': seasonId});
 
-      final list = rows.map((r) => {
-            'id': _parseInt(r[0]),
-            'model_name': r[1],
-            'stitch_price': _parseNum(r[2]),
-            'available_quantity': _parseInt(r[3]),
-          }).toList();
+    final list = rows.map((r) => {
+          'id': _parseInt(r[0]),
+          'model_name': r[1],
+          'stitch_price': _parseNum(r[2]),
+          'available_quantity': _parseInt(r[3]),
+          'image_url': r[4] as String?,
+        }).toList();
 
-      return _okJson(list);
-    } catch (e, st) {
-      print('MODELS BY SEASON ERROR: $e\n$st');
-      return _errJson({'error': e.toString()});
-    }
-  });
+    return _okJson(list);
+  } catch (e, st) {
+    print('MODELS BY SEASON ERROR: $e\n$st');
+    return _errJson({'error': e.toString()});
+  }
+});
 
   router.get('/factures/by_season/<sid|[0-9]+>', (Request req, String sid) async {
     try {

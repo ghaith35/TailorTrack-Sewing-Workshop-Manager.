@@ -9,7 +9,6 @@ import '../main.dart';
 /// ===================== CONFIG =====================
  String get kBaseUrl => '${globalServerUri.toString()}/embrodry/sales';
 
-
 /// ===================== HELPERS =====================
 void showSnack(BuildContext ctx, String msg, {Color? color}) {
   ScaffoldMessenger.of(ctx)
@@ -20,7 +19,7 @@ String fmtDate(String? iso) {
   if (iso == null || iso.isEmpty) return '';
   try {
     final d = DateTime.parse(iso);
-    return "${d.day.toString().padLeft(2,'0')}-${d.month.toString().padLeft(2,'0')}-${d.year}";
+    return "${d.day.toString().padLeft(2, '0')}-${d.month.toString().padLeft(2, '0')}-${d.year}";
   } catch (_) {
     return iso.split('T').first;
   }
@@ -140,17 +139,16 @@ class EmbroiderySalesSection extends StatefulWidget {
   const EmbroiderySalesSection({Key? key}) : super(key: key);
 
   @override
-  State<EmbroiderySalesSection> createState() =>
-      _EmbroiderySalesSectionState();
+  State<EmbroiderySalesSection> createState() => _EmbroiderySalesSectionState();
 }
 
 class _EmbroiderySalesSectionState extends State<EmbroiderySalesSection> {
-  int selectedTab = 2; // 0=Models,1=Clients,2=Factures
+  int selectedTab = 2; // 0=Models, 1=Clients, 2=Factures
 
-  List<dynamic> seasons = [];
-  List<dynamic> models = [];
-  List<dynamic> clients = [];
-  List<dynamic> factures = [];
+  List<Map<String, dynamic>> seasons = [];
+  List<Map<String, dynamic>> models = [];
+  List<Map<String, dynamic>> clients = [];
+  List<Map<String, dynamic>> factures = [];
   Map<String, dynamic>? facturesSummary;
 
   int? seasonId;
@@ -185,7 +183,7 @@ class _EmbroiderySalesSectionState extends State<EmbroiderySalesSection> {
   Future<void> _fetchSeasons() async {
     try {
       final r = await http.get(Uri.parse('$kBaseUrl/seasons'));
-      if (r.statusCode == 200) seasons = jsonDecode(r.body);
+      if (r.statusCode == 200) seasons = List<Map<String, dynamic>>.from(jsonDecode(r.body));
     } catch (_) {
       seasons = [];
     }
@@ -196,7 +194,7 @@ class _EmbroiderySalesSectionState extends State<EmbroiderySalesSection> {
     if (seasonId != null) url = '$kBaseUrl/models/by_season/$seasonId';
     final r = await http.get(Uri.parse(url));
     if (r.statusCode != 200) throw Exception('models ${r.statusCode}');
-    models = jsonDecode(r.body);
+    models = List<Map<String, dynamic>>.from(jsonDecode(r.body));
   }
 
   Future<void> _fetchClients() async {
@@ -204,7 +202,7 @@ class _EmbroiderySalesSectionState extends State<EmbroiderySalesSection> {
     if (seasonId != null) url = '$kBaseUrl/clients/by_season/$seasonId';
     final r = await http.get(Uri.parse(url));
     if (r.statusCode != 200) throw Exception('clients ${r.statusCode}');
-    clients = jsonDecode(r.body);
+    clients = List<Map<String, dynamic>>.from(jsonDecode(r.body));
   }
 
   Future<void> _fetchFactures() async {
@@ -212,7 +210,7 @@ class _EmbroiderySalesSectionState extends State<EmbroiderySalesSection> {
     if (seasonId != null) url = '$kBaseUrl/factures/by_season/$seasonId';
     final r = await http.get(Uri.parse(url));
     if (r.statusCode != 200) throw Exception('factures ${r.statusCode}');
-    factures = jsonDecode(r.body);
+    factures = List<Map<String, dynamic>>.from(jsonDecode(r.body));
     if (factures.isNotEmpty) {
       selectedFactureId ??= factures.first['id'];
       if (!factures.any((f) => f['id'] == selectedFactureId)) {
@@ -271,132 +269,243 @@ class _EmbroiderySalesSectionState extends State<EmbroiderySalesSection> {
     }
   }
 
-Future<void> _addFactureDialog() async {
-  int? clientId;
-  String payType = 'debt';
-  double paidOnCreation = 0.0;
-  final amountCtrl = TextEditingController();
-  final items = <Map<String, dynamic>>[];
-  DateTime fDate = DateTime.now();
-
-  double getTotal() => items.fold<double>(
-      0,
-      (sum, it) {
-        final qty = it['quantity'] as int;
-        final pricePerStitch = it['unit_price'] as double;
-        final stitches = it['stitch_number'] as int;
-        return sum + qty * pricePerStitch * stitches;
-      });
-
-  // INNER DIALOG TO ADD A PRODUCT
-  Future<void> addItem(StateSetter setOuter) async {
-    final _itemFormKey = GlobalKey<FormState>();
-    int? modelId;
-    final qtyCtrl = TextEditingController();
-
-    final availModels =
-        models.where((m) => parseInt(m['available_quantity']) > 0).toList();
-    if (availModels.isEmpty) {
-      showSnack(context, 'لا يوجد مخزون', color: Colors.orange);
-      return;
-    }
-
-    await showDialog(
+  void _showModelImagePopup(String imageUrl) {
+    showDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx2, setDialog) {
-          final prod = availModels.firstWhere(
-              (m) => m['id'] == modelId,
-              orElse: () => <String, dynamic>{});
-          final avail = parseInt(prod['available_quantity'] ?? 0);
-
-          return AlertDialog(
-            title: const Text('إضافة منتج'),
-            content: Form(
-              key: _itemFormKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<int>(
-                    value: modelId,
-                    decoration:
-                        const InputDecoration(labelText: 'اختر الموديل'),
-                    items: availModels.map((m) {
-                      return DropdownMenuItem<int>(
-                        value: m['id'] as int,
-                        child: Text(
-                            '${m['model_name']} (متاح: ${m['available_quantity']})'),
-                      );
-                    }).toList(),
-                    onChanged: (v) => setDialog(() => modelId = v),
-                    validator: (v) =>
-                        v == null ? 'اختر الموديل' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: qtyCtrl,
-                    decoration: InputDecoration(
-                      labelText: prod.isEmpty
-                          ? 'الكمية'
-                          : 'الكمية (حد أقصى: $avail)',
-                    ),
-                    keyboardType: TextInputType.number,
-                    validator: (v) {
-                      final q = int.tryParse(v ?? '') ?? 0;
-                      if (q <= 0 || q > avail) {
-                        return 'الكمية يجب أن تكون بين 1 و $avail';
-                      }
-                      return null;
-                    },
-                  ),
-                ],
-              ),
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(16),
+        child: InteractiveViewer(
+          child: Image.network(
+            '${globalServerUri.toString()}$imageUrl',
+            fit: BoxFit.contain,
+            loadingBuilder: (ctx, child, progress) {
+              if (progress == null) return child;
+              return const Center(child: CircularProgressIndicator());
+            },
+            errorBuilder: (ctx, err, st) => const Center(
+              child: Icon(Icons.broken_image, size: 64),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx2),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  if (!_itemFormKey.currentState!.validate()) return;
-                  final unitPrice = parseNum(prod['stitch_price']);
-                  final idx = items.indexWhere(
-                      (i) => i['model_id'] == modelId);
-                  if (idx != -1) {
-                    items[idx]['quantity'] =
-                        int.parse(qtyCtrl.text);
-                  } else {
-                    items.add({
-                      'model_id': modelId,
-                      'model_name': prod['model_name'],
-                      'quantity': int.parse(qtyCtrl.text),
-                      'unit_price': unitPrice,
-                      'stitch_number': prod['stitch_number'],
-                    });
-                  }
-                  setOuter(() {});
-                  Navigator.pop(ctx2);
-                },
-                child: const Text('إضافة'),
-              ),
-            ],
-          );
-        },
+          ),
+        ),
       ),
     );
   }
 
-  // MAIN FACTURE DIALOG
-  final _formKey = GlobalKey<FormState>();
-  await showDialog(
-    context: context,
-    builder: (ctx) => StatefulBuilder(builder: (ctx2, setD) {
-      return AlertDialog(
-        title: const Text('فاتورة جديدة'),
-        content: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
+  Future<void> _addFactureDialog() async {
+    int? clientId;
+    String payType = 'debt';
+    double paidOnCreation = 0.0;
+    final amountCtrl = TextEditingController();
+    final items = <Map<String, dynamic>>[];
+    DateTime fDate = DateTime.now();
+
+    double getTotal() => items.fold<double>(
+          0,
+          (sum, it) {
+            final qty = it['quantity'] as int;
+            final pricePerStitch = it['unit_price'] as double;
+            final stitches = it['stitch_number'] as int;
+            return sum + qty * pricePerStitch * stitches;
+          },
+        );
+
+    // INNER DIALOG TO ADD A PRODUCT
+    Future<void> addItem(StateSetter setOuter) async {
+      int? modelId;
+      final qtyCtrl = TextEditingController();
+
+      final availModels = models.where((m) => parseInt(m['available_quantity']) > 0).toList();
+      if (availModels.isEmpty) {
+        showSnack(context, 'لا يوجد مخزون', color: Colors.orange);
+        return;
+      }
+
+      await showDialog(
+        context: context,
+        builder: (ctx) => StatefulBuilder(
+          builder: (ctx2, setDialog) {
+            final prod = availModels.firstWhere(
+              (m) => m['id'] == modelId,
+              orElse: () => <String, dynamic>{},
+            );
+            final avail = parseInt(prod['available_quantity'] ?? 0);
+
+            return AlertDialog(
+              title: const Text('إضافة منتج'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Autocomplete<Map<String, dynamic>>(
+                      optionsBuilder: (TextEditingValue textEditingValue) {
+                        final query = textEditingValue.text.toLowerCase();
+                        return availModels.where((m) {
+                          final name = m['model_name'].toString().toLowerCase();
+                          return name.contains(query);
+                        }).toList();
+                      },
+                      displayStringForOption: (option) =>
+                          '${option['model_name']} (متاح: ${option['available_quantity']}, سعر الغرزة: ${option['stitch_price']})',
+                      fieldViewBuilder: (
+                        BuildContext context,
+                        TextEditingController textEditingController,
+                        FocusNode focusNode,
+                        VoidCallback onFieldSubmitted,
+                      ) {
+                        return TextField(
+                          controller: textEditingController,
+                          focusNode: focusNode,
+                          decoration: InputDecoration(
+                            labelText: 'اختر الموديل',
+                            suffixIcon: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (textEditingController.text.isNotEmpty)
+                                  IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () {
+                                      textEditingController.clear();
+                                      setDialog(() => modelId = null);
+                                    },
+                                  ),
+                                if (modelId != null)
+                                  IconButton(
+                                    icon: const Icon(Icons.image, color: Colors.blue),
+                                    onPressed: () {
+                                      final selectedModel = availModels.firstWhere(
+                                        (m) => m['id'] == modelId,
+                                        orElse: () => {},
+                                      );
+                                      final imageUrl = selectedModel['image_url'] as String?;
+                                      if (imageUrl != null && imageUrl.isNotEmpty) {
+                                        _showModelImagePopup(imageUrl);
+                                      } else {
+                                        showSnack(context, 'لا توجد صورة');
+                                      }
+                                    },
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                      onSelected: (Map<String, dynamic> option) {
+                        setDialog(() => modelId = option['id'] as int);
+                      },
+                      optionsViewBuilder: (
+                        BuildContext context,
+                        AutocompleteOnSelected<Map<String, dynamic>> onSelected,
+                        Iterable<Map<String, dynamic>> options,
+                      ) {
+                        return Align(
+                          alignment: Alignment.topRight,
+                          child: Material(
+                            elevation: 4.0,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
+                              child: ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: options.length,
+                                itemBuilder: (BuildContext context, int index) {
+                                  final option = options.elementAt(index);
+                                  final imageUrl = option['image_url'] as String?;
+                                  return GestureDetector(
+                                    onTap: () => onSelected(option),
+                                    child: ListTile(
+                                      leading: (imageUrl != null && imageUrl.isNotEmpty)
+                                          ? GestureDetector(
+                                              onTap: () => _showModelImagePopup(imageUrl),
+                                              child: ClipRRect(
+                                                borderRadius: BorderRadius.circular(4),
+                                                child: Image.network(
+                                                  '${globalServerUri.toString()}$imageUrl',
+                                                  width: 40,
+                                                  height: 40,
+                                                  fit: BoxFit.cover,
+                                                  errorBuilder: (_, __, ___) =>
+                                                      const Icon(Icons.image_not_supported),
+                                                ),
+                                              ),
+                                            )
+                                          : const Icon(Icons.image, size: 40, color: Colors.grey),
+                                      title: Text(
+                                        '${option['model_name']} (متاح: ${option['available_quantity']}, سعر الغرزة: ${option['stitch_price']})',
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: qtyCtrl,
+                      decoration: InputDecoration(
+                        labelText: prod.isEmpty ? 'الكمية' : 'الكمية (حد أقصى: $avail)',
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx2),
+                  child: const Text('إلغاء'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    if (modelId == null) {
+                      showSnack(context, 'اختر الموديل');
+                      return;
+                    }
+                    final q = int.tryParse(qtyCtrl.text) ?? 0;
+                    if (q <= 0) {
+                      showSnack(context, 'أدخل كمية صحيحة');
+                      return;
+                    }
+                    if (q > avail) {
+                      showSnack(context, 'الكمية أكبر من $avail');
+                      return;
+                    }
+
+                    final unitPrice = parseNum(prod['stitch_price']);
+                    final idx = items.indexWhere((i) => i['model_id'] == modelId);
+                    if (idx != -1) {
+                      items[idx]['quantity'] = q;
+                    } else {
+                      items.add({
+                        'model_id': modelId,
+                        'model_name': prod['model_name'],
+                        'quantity': q,
+                        'unit_price': unitPrice,
+                        'stitch_number': prod['stitch_number'],
+                        'image_url': prod['image_url'],
+                      });
+                    }
+                    setOuter(() {});
+                    Navigator.pop(ctx2);
+                  },
+                  child: const Text('إضافة'),
+                ),
+              ],
+            );
+          },
+        ),
+      );
+    }
+
+    // MAIN FACTURE DIALOG
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx2, setD) {
+        return AlertDialog(
+          title: const Text('فاتورة جديدة'),
+          content: SingleChildScrollView(
             child: SizedBox(
               width: 520,
               child: Column(
@@ -407,8 +516,7 @@ Future<void> _addFactureDialog() async {
                     child: Padding(
                       padding: const EdgeInsets.all(8),
                       child: Row(children: [
-                        Text(
-                            'تاريخ: ${fDate.toLocal().toString().split(' ')[0]}'),
+                        Text('تاريخ: ${fDate.toLocal().toString().split(' ')[0]}'),
                         const Spacer(),
                         ElevatedButton(
                           onPressed: () async {
@@ -431,8 +539,7 @@ Future<void> _addFactureDialog() async {
 
                   // Client dropdown
                   DropdownButtonFormField<int>(
-                    decoration:
-                        const InputDecoration(labelText: 'اختر العميل'),
+                    decoration: const InputDecoration(labelText: 'اختر العميل'),
                     value: clientId,
                     items: clients.map((c) {
                       return DropdownMenuItem<int>(
@@ -441,8 +548,7 @@ Future<void> _addFactureDialog() async {
                       );
                     }).toList(),
                     onChanged: (v) => setD(() => clientId = v),
-                    validator: (v) =>
-                        v == null ? 'اختر العميل' : null,
+                    validator: (v) => v == null ? 'اختر العميل' : null,
                   ),
                   const SizedBox(height: 8),
 
@@ -454,34 +560,45 @@ Future<void> _addFactureDialog() async {
                         padding: const EdgeInsets.all(8),
                         child: Column(children: [
                           Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               const Text('المنتجات',
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.bold)),
-                              Text(
-                                  'الإجمالي: ${getTotal().toStringAsFixed(2)} دج',
+                                  style: TextStyle(fontWeight: FontWeight.bold)),
+                              Text('الإجمالي: ${getTotal().toStringAsFixed(2)} دج',
                                   style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.green)),
+                                      fontWeight: FontWeight.bold, color: Colors.green)),
                             ],
                           ),
                           const Divider(),
                           ...items.asMap().entries.map((e) {
                             final idx = e.key;
                             final it = e.value;
+                            final imageUrl = it['image_url'] as String?;
                             return ListTile(
+                              leading: (imageUrl != null && imageUrl.isNotEmpty)
+                                  ? GestureDetector(
+                                      onTap: () => _showModelImagePopup(imageUrl),
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(4),
+                                        child: Image.network(
+                                          '${globalServerUri.toString()}$imageUrl',
+                                          width: 40,
+                                          height: 40,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) =>
+                                              const Icon(Icons.image_not_supported),
+                                        ),
+                                      ),
+                                    )
+                                  : const Icon(Icons.image, size: 40, color: Colors.grey),
                               title: Text(it['model_name']),
                               subtitle: Text(
                                   '${it['quantity']} * ${it['unit_price'].toStringAsFixed(2)} دج/غرزة'
                                   ' * ${it['stitch_number']} غرز'
                                   ' = ${(it['quantity'] * it['unit_price'] * it['stitch_number']).toStringAsFixed(2)} دج'),
                               trailing: IconButton(
-                                icon: const Icon(Icons.delete,
-                                    color: Colors.red),
-                                onPressed: () =>
-                                    setD(() => items.removeAt(idx)),
+                                icon: const Icon(Icons.delete, color: Colors.red),
+                                onPressed: () => setD(() => items.removeAt(idx)),
                               ),
                             );
                           }).toList(),
@@ -503,10 +620,8 @@ Future<void> _addFactureDialog() async {
                   const Divider(),
 
                   // Total display
-                  Text(
-                      'الإجمالي: ${getTotal().toStringAsFixed(2)} دج',
-                      style:
-                          const TextStyle(fontWeight: FontWeight.bold)),
+                  Text('الإجمالي: ${getTotal().toStringAsFixed(2)} دج',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
 
                   // Payment type radios
@@ -532,10 +647,9 @@ Future<void> _addFactureDialog() async {
                     TextFormField(
                       controller: amountCtrl,
                       decoration: InputDecoration(
-                          labelText:
-                              'دفعة أولى (حد أقصى: ${getTotal().toStringAsFixed(2)})'),
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
+                        labelText: 'دفعة أولى (حد أقصى: ${getTotal().toStringAsFixed(2)})',
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       validator: (v) {
                         final a = double.tryParse(v ?? '') ?? 0.0;
                         if (a < 0 || a > getTotal()) {
@@ -545,72 +659,71 @@ Future<void> _addFactureDialog() async {
                       },
                       onChanged: (v) {
                         final a = double.tryParse(v) ?? 0.0;
-                        paidOnCreation =
-                            a > getTotal() ? getTotal() : a;
+                        paidOnCreation = a > getTotal() ? getTotal() : a;
                       },
                     ),
                 ],
               ),
             ),
           ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx2),
-              child: const Text('إلغاء')),
-          ElevatedButton(
-            onPressed: () async {
-              if (!_formKey.currentState!.validate()) return;
-              if (items.isEmpty) {
-                showSnack(context,
-                    'أضف منتجًا واحدًا على الأقل',
-                    color: Colors.red);
-                return;
-              }
-              final tot = getTotal();
-              final payload = {
-                'client_id': clientId,
-                'facture_date': fDate.toIso8601String().split('T')[0],
-                'total_amount': tot,
-                'amount_paid_on_creation':
-                    payType == 'cash' ? paidOnCreation : 0.0,
-                'items': items
-                    .map((e) => {
-                          'model_id': e['model_id'],
-                          'quantity': e['quantity'],
-                          'unit_price': e['unit_price'],
-                        })
-                    .toList(),
-              };
-              try {
-                final r = await http.post(
-                  Uri.parse('$kBaseUrl/factures'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode(payload),
-                );
-                if (r.statusCode == 201) {
-                  showSnack(context, 'تمت الإضافة',
-                      color: Colors.green);
-                  Navigator.pop(ctx2);
-                  await _fetchFactures();
-                  await _fetchSummary();
-                  setState(() {});
-                } else {
-                  showSnack(context, 'فشل: ${r.body}',
-                      color: Colors.red);
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx2), child: const Text('إلغاء')),
+            ElevatedButton(
+              onPressed: () async {
+                if (clientId == null) {
+                  showSnack(context, 'اختر العميل', color: Colors.red);
+                  return;
                 }
-              } catch (e) {
-                showSnack(context, 'خطأ اتصال: $e',
-                    color: Colors.red);
-              }
-            },
-            child: const Text('حفظ'),
-          )
-        ],
-      );
-    }),
-  );
-}
+                if (items.isEmpty) {
+                  showSnack(context, 'أضف منتجًا واحدًا على الأقل', color: Colors.red);
+                  return;
+                }
+                final tot = getTotal();
+                if (payType == 'cash' && (double.tryParse(amountCtrl.text) ?? 0) > tot) {
+                  showSnack(context, 'الدفعة الأولى لا يمكن أن تكون أكبر من الإجمالي',
+                      color: Colors.red);
+                  return;
+                }
+                final payload = {
+                  'client_id': clientId,
+                  'facture_date': fDate.toIso8601String().split('T')[0],
+                  'total_amount': tot,
+                  'amount_paid_on_creation': payType == 'cash' ? paidOnCreation : 0.0,
+                  'items': items
+                      .map((e) => {
+                            'model_id': e['model_id'],
+                            'quantity': e['quantity'],
+                            'unit_price': e['unit_price'],
+                          })
+                      .toList(),
+                };
+                try {
+                  final r = await http.post(
+                    Uri.parse('$kBaseUrl/factures'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(payload),
+                  );
+                  if (r.statusCode == 201) {
+                    showSnack(context, 'تمت الإضافة', color: Colors.green);
+                    Navigator.pop(ctx2);
+                    await _fetchFactures();
+                    await _fetchSummary();
+                    setState(() {});
+                  } else {
+                    showSnack(context, 'فشل: ${r.body}', color: Colors.red);
+                  }
+                } catch (e) {
+                  showSnack(context, 'خطأ اتصال: $e', color: Colors.red);
+                }
+              },
+              child: const Text('حفظ'),
+            )
+          ],
+        );
+      }),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -711,7 +824,8 @@ Future<void> _addFactureDialog() async {
                           children: [
                             Icon(Icons.receipt_long, size: 64, color: Colors.grey[400]),
                             const SizedBox(height: 16),
-                            Text('اختر فاتورة', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+                            Text('اختر فاتورة',
+                                style: TextStyle(fontSize: 18, color: Colors.grey[600])),
                           ],
                         ),
                       )
@@ -755,11 +869,28 @@ Future<void> _addFactureDialog() async {
                       itemBuilder: (_, i) {
                         final m = models[i];
                         final sel = m['id'] == selectedModelId;
+                        final imageUrl = m['image_url'] as String?;
                         return Card(
                           margin: const EdgeInsets.symmetric(vertical: 4),
                           elevation: sel ? 4 : 1,
                           color: sel ? Colors.grey[100] : Colors.white,
                           child: ListTile(
+                            leading: (imageUrl != null && imageUrl.isNotEmpty)
+                                ? GestureDetector(
+                                    onTap: () => _showModelImagePopup(imageUrl),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(4),
+                                      child: Image.network(
+                                        '${globalServerUri.toString()}$imageUrl',
+                                        width: 40,
+                                        height: 40,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) =>
+                                            const Icon(Icons.broken_image),
+                                      ),
+                                    ),
+                                  )
+                                : const Icon(Icons.image, size: 40, color: Colors.grey),
                             selected: sel,
                             title: Text(m['model_name'],
                                 style: TextStyle(
@@ -789,7 +920,8 @@ Future<void> _addFactureDialog() async {
                     children: [
                       Icon(Icons.inventory, size: 64, color: Colors.grey[400]),
                       const SizedBox(height: 16),
-                      Text('اختر موديل', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+                      Text('اختر موديل',
+                          style: TextStyle(fontSize: 18, color: Colors.grey[600])),
                     ],
                   ),
                 )
@@ -863,7 +995,10 @@ Future<void> _addFactureDialog() async {
                     children: [
                       Icon(Icons.person, size: 64, color: Colors.grey[400]),
                       const SizedBox(height: 16),
-                      Text('اختر عميل', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+                      Text(
+                        'اختر عميل',
+                        style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                      ),
                     ],
                   ),
                 )
@@ -897,6 +1032,29 @@ Future<void> _addFactureDialog() async {
 class _FactureDetailView extends StatelessWidget {
   final int factureId;
   const _FactureDetailView({super.key, required this.factureId});
+
+  void _showModelImagePopup(BuildContext context, String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(16),
+        child: InteractiveViewer(
+          child: Image.network(
+            '${globalServerUri.toString()}$imageUrl',
+            fit: BoxFit.contain,
+            loadingBuilder: (ctx, child, progress) {
+              if (progress == null) return child;
+              return const Center(child: CircularProgressIndicator());
+            },
+            errorBuilder: (ctx, err, st) => const Center(
+              child: Icon(Icons.broken_image, size: 64),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Future<void> _printFacture(Map<String, dynamic> facture) async {
     final pdf = pw.Document();
@@ -979,11 +1137,13 @@ class _FactureDetailView extends StatelessWidget {
                       ),
                       pw.Padding(
                         padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('${parseNum(it['unit_price']).toStringAsFixed(2)} دج', style: pw.TextStyle(font: font)),
+                        child: pw.Text('${parseNum(it['unit_price']).toStringAsFixed(2)} دج',
+                            style: pw.TextStyle(font: font)),
                       ),
                       pw.Padding(
                         padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('${parseNum(it['line_total']).toStringAsFixed(2)} دج', style: pw.TextStyle(font: font)),
+                        child: pw.Text('${parseNum(it['line_total']).toStringAsFixed(2)} دج',
+                            style: pw.TextStyle(font: font)),
                       ),
                     ],
                   );
@@ -1118,8 +1278,7 @@ class _FactureDetailView extends StatelessWidget {
                         const SizedBox(height: 12),
                         Row(
                           children: [
-                            const Icon(Icons.calendar_today,
-                                size: 20, color: Colors.blue),
+                            const Icon(Icons.calendar_today, size: 20, color: Colors.blue),
                             const SizedBox(width: 8),
                             Text('التاريخ: ${fmtDate(d['facture_date'])}'),
                           ],
@@ -1127,8 +1286,7 @@ class _FactureDetailView extends StatelessWidget {
                         const SizedBox(height: 8),
                         Row(
                           children: [
-                            const Icon(Icons.person,
-                                size: 20, color: Colors.blue),
+                            const Icon(Icons.person, size: 20, color: Colors.blue),
                             const SizedBox(width: 8),
                             Text('العميل: ${d['client_name']}'),
                           ],
@@ -1136,8 +1294,7 @@ class _FactureDetailView extends StatelessWidget {
                         const SizedBox(height: 8),
                         Row(
                           children: [
-                            const Icon(Icons.phone,
-                                size: 20, color: Colors.blue),
+                            const Icon(Icons.phone, size: 20, color: Colors.blue),
                             const SizedBox(width: 8),
                             Text('الهاتف: ${d['client_phone']}'),
                           ],
@@ -1145,8 +1302,7 @@ class _FactureDetailView extends StatelessWidget {
                         const SizedBox(height: 8),
                         Row(
                           children: [
-                            const Icon(Icons.location_on,
-                                size: 20, color: Colors.blue),
+                            const Icon(Icons.location_on, size: 20, color: Colors.blue),
                             const SizedBox(width: 8),
                             Text('العنوان: ${d['client_address']}'),
                           ],
@@ -1176,16 +1332,16 @@ class _FactureDetailView extends StatelessWidget {
                                     'الإجمالي', d['total_amount'], Colors.green[700]!)),
                             const SizedBox(width: 8),
                             Expanded(
-                                child: costItem(
-                                    'المدفوع', d['total_paid'], Colors.blue[700]!)),
+                                child:
+                                    costItem('المدفوع', d['total_paid'], Colors.blue[700]!)),
                           ],
                         ),
                         const SizedBox(height: 8),
                         Row(
                           children: [
                             Expanded(
-                                child: costItem('المتبقي', d['remaining_amount'],
-                                    Colors.orange[700]!)),
+                                child: costItem(
+                                    'المتبقي', d['remaining_amount'], Colors.orange[700]!)),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Container(
@@ -1257,13 +1413,14 @@ class _FactureDetailView extends StatelessWidget {
                                   Theme.of(context).colorScheme.primary),
                               headingTextStyle: const TextStyle(
                                   color: Colors.white, fontWeight: FontWeight.bold),
-                              columns: const [
-                                DataColumn(label: Text('المنتج')),
-                                DataColumn(label: Text('النوع')),
-                                DataColumn(label: Text('عدد الغرز')),
-                                DataColumn(label: Text('سعر الغرزة')),
-                                DataColumn(label: Text('الكمية')),
-                                DataColumn(label: Text('الإجمالي')),
+                              columns: [
+                                const DataColumn(label: Text('صورة')),
+                                const DataColumn(label: Text('المنتج')),
+                                const DataColumn(label: Text('النوع')),
+                                const DataColumn(label: Text('عدد الغرز')),
+                                const DataColumn(label: Text('سعر الغرزة')),
+                                const DataColumn(label: Text('الكمية')),
+                                const DataColumn(label: Text('الإجمالي')),
                               ],
                               rows: (d['items'] as List).map<DataRow>((it) {
                                 final qty = parseInt(it['quantity']);
@@ -1271,7 +1428,27 @@ class _FactureDetailView extends StatelessWidget {
                                 final snum = it['stitch_number'] ?? '';
                                 final mtype = it['model_type'] ?? '';
                                 final stitches = parseInt(it['stitch_number']);
+                                final imageUrl = it['image_url'] as String?;
                                 return DataRow(cells: [
+                                  DataCell(
+                                    (imageUrl != null && imageUrl.isNotEmpty)
+                                        ? GestureDetector(
+                                            onTap: () => _showModelImagePopup(context, imageUrl),
+                                            child: ClipRRect(
+                                              borderRadius: BorderRadius.circular(4),
+                                              child: Image.network(
+                                                '${globalServerUri.toString()}$imageUrl',
+                                                width: 40,
+                                                height: 40,
+                                                fit: BoxFit.cover,
+                                                errorBuilder: (_, __, ___) =>
+                                                    const Icon(Icons.image_not_supported),
+                                              ),
+                                            ),
+                                          )
+                                        : const Icon(Icons.image,
+                                            size: 40, color: Colors.grey),
+                                  ),
                                   DataCell(Text(it['model_name'] ?? '')),
                                   DataCell(Text(mtype.toString())),
                                   DataCell(Text(snum.toString())),
@@ -1319,12 +1496,14 @@ class _FactureDetailView extends StatelessWidget {
                                 DataColumn(label: Text('تاريخ الإرجاع')),
                                 DataColumn(label: Text('ملاحظات')),
                               ],
-                              rows: (d['returns'] as List).map<DataRow>((r) => DataRow(cells: [
-                                    DataCell(Text(r['model_name'] ?? '')),
-                                    DataCell(Text('${r['quantity'] ?? 0}')),
-                                    DataCell(Text(fmtDate(r['return_date']))),
-                                    DataCell(Text(r['notes'] ?? '')),
-                                  ])).toList(),
+                              rows: (d['returns'] as List)
+                                  .map<DataRow>((r) => DataRow(cells: [
+                                        DataCell(Text(r['model_name'] ?? '')),
+                                        DataCell(Text('${r['quantity'] ?? 0}')),
+                                        DataCell(Text(fmtDate(r['return_date']))),
+                                        DataCell(Text(r['notes'] ?? '')),
+                                      ]))
+                                  .toList(),
                             ),
                           ),
                         ],
@@ -1385,8 +1564,8 @@ class _ModelBuyersPanelState extends State<ModelBuyersPanel> {
       buyers = [];
     });
     try {
-      final r = await http
-          .get(Uri.parse('$kBaseUrl/models/${widget.modelId}/clients'));
+      final r =
+          await http.get(Uri.parse('$kBaseUrl/models/${widget.modelId}/clients'));
       if (r.statusCode == 200) buyers = jsonDecode(r.body);
     } finally {
       setState(() => loading = false);
@@ -1550,8 +1729,7 @@ class _ModelBuyersPanelState extends State<ModelBuyersPanel> {
 class ClientDetailsTabs extends StatefulWidget {
   final int clientId;
   final int? seasonId;
-  const ClientDetailsTabs(
-      {super.key, required this.clientId, this.seasonId});
+  const ClientDetailsTabs({super.key, required this.clientId, this.seasonId});
 
   @override
   State<ClientDetailsTabs> createState() => _ClientDetailsTabsState();
@@ -1595,8 +1773,8 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
       factures = [];
     });
     try {
-      final r = await http.get(
-          Uri.parse('$kBaseUrl/clients/${widget.clientId}/factures'));
+      final r =
+          await http.get(Uri.parse('$kBaseUrl/clients/${widget.clientId}/factures'));
       if (r.statusCode == 200) factures = jsonDecode(r.body);
     } finally {
       setState(() => loadingFactures = false);
@@ -1711,7 +1889,8 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
           children: [
             Icon(Icons.receipt_outlined, size: 64, color: Colors.grey[400]),
             const SizedBox(height: 16),
-            Text('لا توجد فواتير', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+            Text('لا توجد فواتير',
+                style: TextStyle(fontSize: 18, color: Colors.grey[600])),
           ],
         ),
       );
@@ -1844,12 +2023,14 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
                                 DataColumn(label: Text('تاريخ الإرجاع')),
                                 DataColumn(label: Text('ملاحظات')),
                               ],
-                              rows: (f['returns'] as List).map<DataRow>((r) => DataRow(cells: [
-                                    DataCell(Text(r['model_name'] ?? '')),
-                                    DataCell(Text('${r['quantity'] ?? 0}')),
-                                    DataCell(Text(fmtDate(r['return_date']))),
-                                    DataCell(Text(r['notes'] ?? '')),
-                                  ])).toList(),
+                              rows: (f['returns'] as List)
+                                  .map<DataRow>((r) => DataRow(cells: [
+                                        DataCell(Text(r['model_name'] ?? '')),
+                                        DataCell(Text('${r['quantity'] ?? 0}')),
+                                        DataCell(Text(fmtDate(r['return_date']))),
+                                        DataCell(Text(r['notes'] ?? '')),
+                                      ]))
+                                  .toList(),
                             ),
                           ),
                         ],
@@ -1919,7 +2100,8 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
                           Icon(Icons.account_balance_outlined,
                               size: 64, color: Colors.grey[400]),
                           const SizedBox(height: 16),
-                          Text('لا توجد معاملات', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+                          Text('لا توجد معاملات',
+                              style: TextStyle(fontSize: 18, color: Colors.grey[600])),
                         ],
                       ),
                     )
