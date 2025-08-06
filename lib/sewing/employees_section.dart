@@ -20,6 +20,7 @@ class _SewingEmployeesSectionState extends State<SewingEmployeesSection> {
   int selectedInfoTab = 0;
   int attType = 0;
 late pw.Font _arabicFont;
+List<dynamic> _filteredAttEmployees = [];
 
   // Attendance year/month selection
   List<int> _availableYears = [];
@@ -844,27 +845,44 @@ if (loanRes.statusCode == 200) {
   }
 
   Future<void> fetchAttendance() async {
-    if (selectedYearMonth == null) return;
-    setState(() {
-      attLoading = true;
-      attEmployees = [];
-      selectedEmployeeId = null;
-    });
+  if (selectedYearMonth == null) return;
+  setState(() {
+    attLoading = true;
+    attEmployees = [];
+    _filteredAttEmployees = []; // Add this
+    selectedEmployeeId = null;
+  });
 
-    final url = attType == 0
-        ? '${globalServerUri.toString()}/employees/attendance/monthly?month=$selectedYearMonth'
-        : '${globalServerUri.toString()}/employees/attendance/piece?month=$selectedYearMonth';
+  final url = attType == 0
+      ? '${globalServerUri.toString()}/employees/attendance/monthly?month=$selectedYearMonth'
+      : '${globalServerUri.toString()}/employees/attendance/piece?month=$selectedYearMonth';
 
-    final res = await http.get(Uri.parse(url));
-    if (res.statusCode == 200) {
-      attEmployees = jsonDecode(res.body);
-      selectedEmployeeId = attEmployees.isNotEmpty ? attEmployees.first['employee_id'] : null;
-    } else {
-      attEmployees = [];
-      selectedEmployeeId = null;
-    }
-    setState(() => attLoading = false);
+  final res = await http.get(Uri.parse(url));
+  if (res.statusCode == 200) {
+    attEmployees = jsonDecode(res.body);
+    _filteredAttEmployees = attEmployees; // Add this
+    selectedEmployeeId = attEmployees.isNotEmpty ? attEmployees.first['employee_id'] : null;
+  } else {
+    attEmployees = [];
+    _filteredAttEmployees = []; // Add this
+    selectedEmployeeId = null;
   }
+  setState(() => attLoading = false);
+}
+
+void _filterAttendanceEmployees() {
+  final query = _presenceSearchController.text.toLowerCase();
+  setState(() {
+    if (query.isEmpty) {
+      _filteredAttEmployees = attEmployees;
+    } else {
+      _filteredAttEmployees = attEmployees.where((emp) {
+        final fullName = '${emp['first_name']} ${emp['last_name']}'.toLowerCase();
+        return fullName.contains(query);
+      }).toList();
+    }
+  });
+}
 
   Future<void> fetchPresence() async {
   setState(() {
@@ -2313,15 +2331,17 @@ Widget build(BuildContext context) {
                                 Text('العمال', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey[800])),
                                 const SizedBox(height: 16),
                                 TextField(
-                                  controller: _presenceSearchController,
-                                  decoration: InputDecoration(
-                                    hintText: 'بحث بالعامل أو التاريخ',
-                                    prefixIcon: const Icon(Icons.search),
-                                    filled: true,
-                                    fillColor: Colors.white,
-                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                                  ),
-                                ),
+  controller: _presenceSearchController,
+  onChanged: (_) => _filterAttendanceEmployees(),
+  decoration: InputDecoration(
+    hintText: 'بحث بالعامل',
+    prefixIcon: const Icon(Icons.search),
+    filled: true,
+    fillColor: Colors.white,
+    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+  ),
+),
+
                               ],
                             ),
                           ),
@@ -2331,23 +2351,25 @@ Widget build(BuildContext context) {
                                 : attEmployees.isEmpty
                                     ? const Center(child: Text('لا يوجد عمال'))
                                     : ListView.builder(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                                        itemCount: attEmployees.length,
-                                        itemBuilder: (ctx, i) {
-                                          final emp = attEmployees[i];
-                                          final isSel = selectedEmployeeId == emp['employee_id'];
-                                          return Card(
-                                            margin: const EdgeInsets.symmetric(vertical: 4),
-                                            elevation: isSel ? 4 : 1,
-                                            color: isSel ? Colors.grey[100] : Colors.white,
-                                            child: ListTile(
-                                              selected: isSel,
-                                              title: Text('${emp['first_name']} ${emp['last_name']}', style: TextStyle(fontWeight: isSel ? FontWeight.bold : FontWeight.normal)),
-                                              onTap: () => setState(() => selectedEmployeeId = emp['employee_id']),
-                                            ),
-                                          );
-                                        },
-                                      ),
+  padding: const EdgeInsets.symmetric(horizontal: 8),
+  itemCount: _filteredAttEmployees.length,
+  itemBuilder: (ctx, i) {
+    final emp = _filteredAttEmployees[i];
+    final isSel = selectedEmployeeId == emp['employee_id'];
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      elevation: isSel ? 4 : 1,
+      color: isSel ? Colors.grey[100] : Colors.white,
+      child: ListTile(
+        selected: isSel,
+        title: Text('${emp['first_name']} ${emp['last_name']}', 
+          style: TextStyle(fontWeight: isSel ? FontWeight.bold : FontWeight.normal)),
+        onTap: () => setState(() => selectedEmployeeId = emp['employee_id']),
+      ),
+    );
+  },
+),
+
                           ),
                         ],
                       ),
@@ -2862,10 +2884,10 @@ class _EmployeeDialogState extends State<EmployeeDialog> {
                 onChanged: (v) => setState(() => role = v),
                 validator: (v) => v == null ? 'مطلوب' : null,
               ),
-              TextFormField(
-                controller: photoUrl,
-                decoration: const InputDecoration(labelText: 'رابط الصورة (اختياري)'),
-              ),
+              // TextFormField(
+              //   controller: photoUrl,
+              //   decoration: const InputDecoration(labelText: 'رابط الصورة (اختياري)'),
+              // ),
             ],
           ),
         ),
