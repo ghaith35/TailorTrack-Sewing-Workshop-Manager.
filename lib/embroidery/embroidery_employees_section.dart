@@ -2487,10 +2487,10 @@ class _EmployeeDialogState extends State<EmployeeDialog> {
                   onChanged: (v) => setState(() => shiftHours = v!),
                   validator: (v) => v == null ? 'مطلوب' : null,
                 ),
-              TextFormField(
-                controller: photoUrl,
-                decoration: const InputDecoration(labelText: 'رابط الصورة (اختياري)'),
-              ),
+              // TextFormField(
+              //   controller: photoUrl,
+              //   decoration: const InputDecoration(labelText: 'رابط الصورة (اختياري)'),
+              // ),
             ],
           ),
         ),

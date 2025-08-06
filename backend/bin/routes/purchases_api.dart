@@ -141,17 +141,36 @@ Router getPurchasesRoutes(PostgreSQLConnection db) {
   });
 
   // ─── Materials by type for cascading dropdown ─────────────────────────
-  router.get('/materials/by_type/<typeId|[0-9]+>', (Request req, String typeId) async {
-    final rows = await db.mappedResultsQuery(
-      'SELECT id, code FROM sewing.materials WHERE type_id = @type ORDER BY code',
-      substitutionValues: {'type': int.parse(typeId)});
-    final list = rows.map((r) => {
-      'id'  : r['materials']!['id'],
-      'code': r['materials']!['code'],
-    }).toList();
-    return Response.ok(jsonEncode(list),
-        headers: {'Content-Type': 'application/json'});
-  });
+ router.get('/materials/by_type/<typeId|[0-9]+>', (Request req, String typeId) async {
+  final typeIdNum = int.parse(typeId);
+  final searchQuery = req.url.queryParameters['q']?.trim() ?? '';
+  final queryParams = <String, dynamic>{'type': typeIdNum}; // Use dynamic type for queryParams
+  String sql = '''
+    SELECT
+      m.id,
+      m.code,
+      m.image_url,
+      mt.name AS type_name
+    FROM sewing.materials m
+    LEFT JOIN sewing.material_types mt ON m.type_id = mt.id
+    WHERE m.type_id = @type
+  ''';
+  if (searchQuery.isNotEmpty) {
+    sql += ' AND m.code ILIKE @q';
+    queryParams['q'] = '%$searchQuery%'; // String value for ILIKE
+  }
+  sql += ' ORDER BY m.code';
+  
+  final rows = await db.mappedResultsQuery(sql, substitutionValues: queryParams);
+  final list = rows.map((r) => {
+    'id': r['materials']!['id'],
+    'code': r['materials']!['code'],
+    'image_url': r['materials']!['image_url'] ?? '',
+    'type_name': r['material_types']?['type_name'],
+  }).toList();
+  return Response.ok(jsonEncode(list),
+      headers: {'Content-Type': 'application/json'});
+});
 
   // ─── List all materials ────────────────────────────────────────────────
   router.get('/materials', (Request req) async {

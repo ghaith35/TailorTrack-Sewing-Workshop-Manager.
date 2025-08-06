@@ -131,6 +131,7 @@ late pw.Font _arabicFont;
     
     _initializeData();
   }
+
 Future<void> _loadPdfFont() async {
   final fontData = await rootBundle.load('assets/fonts/NotoSansArabic_Condensed-Black.ttf');
   _arabicFont = pw.Font.ttf(fontData);
@@ -235,6 +236,40 @@ Future<void> _loadPdfFont() async {
         }).toList();
       }
     });
+  }
+
+  // Helper method to fetch employees by search query
+  Future<List<dynamic>> _fetchEmployeesByQuery(String searchQuery, {String? sellerType}) async {
+    try {
+      String url = _employeesUrl;
+      Map<String, String> queryParams = {};
+      
+      if (searchQuery.isNotEmpty) {
+        queryParams['q'] = searchQuery;
+      }
+      if (sellerType != null) {
+        queryParams['seller_type'] = sellerType;
+      }
+      
+      if (queryParams.isNotEmpty) {
+        final uri = Uri.parse(url).replace(queryParameters: queryParams);
+        url = uri.toString();
+      }
+      
+      final res = await http.get(Uri.parse(url));
+      if (res.statusCode == 200) {
+        return jsonDecode(res.body);
+      }
+    } catch (_) {}
+    
+    // Fallback to local filtering if API doesn't support search
+    List<dynamic> employeeList = sellerType == 'piece' ? pieceEmployees : allEmployees;
+    if (searchQuery.isEmpty) return employeeList;
+    
+    return employeeList.where((emp) {
+      final fullName = '${emp['first_name']} ${emp['last_name']}'.toLowerCase();
+      return fullName.contains(searchQuery.toLowerCase());
+    }).toList();
   }
 
   Future<void> _fetchAttendanceYears() async {
@@ -576,33 +611,7 @@ if (loanRes.statusCode == 200) {
     final tableTitle = isMonthly
         ? 'رواتب العمال (شهرياً) - $monthLabel'
         : 'رواتب العمال (قطعة) - $monthLabel';
-    final rawHeaders = isMonthly
-        ? ['الاسم الكامل', 'الراتب', 'مجموع الساعات', 'الراتب الفعلي', 'السلف', 'الديون', 'الراتب النهائي']
-        : ['الاسم الكامل', 'مجموع القطع', 'مجموع الأجر', 'السلف', 'الديون', 'الراتب النهائي'];
-    final rawDataRows = (isMonthly ? monthlyTableRows : pieceTableRows).map<List<String>>((row) {
-      return isMonthly
-          ? [
-              row['full_name'],
-              row['salary'].toStringAsFixed(2),
-              row['total_hours'].toStringAsFixed(2),
-              row['calculated_salary'].toStringAsFixed(2),
-              row['monthly_due'].toStringAsFixed(2),
-              row['debt'].toStringAsFixed(2),
-              row['final_salary'].toStringAsFixed(2),
-            ]
-          : [
-              row['full_name'],
-              row['total_qty'].toString(),
-              row['total_salary'].toStringAsFixed(2),
-              row['monthly_due'].toStringAsFixed(2),
-              row['debt'].toStringAsFixed(2),
-              row['final_salary'].toStringAsFixed(2),
-            ];
-    }).toList();
-
-    // Reverse headers and data rows for RTL layout
-    final headers = rawHeaders.reversed.toList();
-    final dataRows = rawDataRows.map((r) => r.reversed.toList()).toList();
+    final tableData = isMonthly ? monthlyTableRows : pieceTableRows;
 
     pdf.addPage(
       pw.MultiPage(
@@ -625,8 +634,29 @@ if (loanRes.statusCode == 200) {
                   ),
                 ),
                 pw.Table.fromTextArray(
-                  headers: headers,
-                  data: dataRows,
+                  headers: isMonthly
+                      ? ['الاسم الكامل', 'الراتب', 'مجموع الساعات', 'الراتب الفعلي', 'السلف', 'الديون', 'الراتب النهائي']
+                      : ['الاسم الكامل', 'مجموع القطع', 'مجموع الأجر', 'السلف', 'الديون', 'الراتب النهائي'],
+                  data: tableData.map((row) {
+                    return isMonthly
+                        ? [
+                            row['full_name'],
+                            row['salary'].toStringAsFixed(2),
+                            row['total_hours'].toStringAsFixed(2),
+                            row['calculated_salary'].toStringAsFixed(2),
+                            row['monthly_due'].toStringAsFixed(2),
+                            row['debt'].toStringAsFixed(2),
+                            row['final_salary'].toStringAsFixed(2),
+                          ]
+                        : [
+                            row['full_name'],
+                            row['total_qty'].toString(),
+                            row['total_salary'].toStringAsFixed(2),
+                            row['monthly_due'].toStringAsFixed(2),
+                            row['debt'].toStringAsFixed(2),
+                            row['final_salary'].toStringAsFixed(2),
+                          ];
+                  }).toList(),
                   headerStyle: pw.TextStyle(
                     font: _arabicFont,
                     fontWeight: pw.FontWeight.bold,
@@ -636,7 +666,7 @@ if (loanRes.statusCode == 200) {
                     font: _arabicFont,
                     fontSize: 12,
                   ),
-                  cellAlignment: pw.Alignment.centerRight,
+                  cellAlignment: pw.Alignment.center,
                   headerDecoration: pw.BoxDecoration(color: PdfColors.grey300),
                   border: pw.TableBorder.all(width: 0.5),
                 ),
@@ -649,15 +679,21 @@ if (loanRes.statusCode == 200) {
 
     final bytes = await pdf.save();
     
-      final String? outputDir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'اختر مجلد الحفظ');
+      // Desktop: let user choose install directory to save PDF
+      final String? outputDir = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'اختر مجلد الحفظ',
+      );
       if (outputDir != null) {
         final filePath = '$outputDir/رواتب_$monthLabel.pdf';
         final file = io.File(filePath);
         await file.writeAsBytes(bytes);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم حفظ الملف في $filePath')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تم حفظ الملف في $filePath')),
+        );
       }
     
   }
+
 
   Future<void> fetchEmployees() async {
     setState(() => isLoading = true);
@@ -896,7 +932,7 @@ final pieceEmpRes = await http.get(
       : DateTime.now();
   final _formKey = GlobalKey<FormState>();
 
-  // State for “blocked until” logic:
+  // State for "blocked until" logic:
   bool hasActiveLoan = false;
   DateTime? nextAvailable;
 
@@ -925,26 +961,64 @@ final pieceEmpRes = await http.get(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Employee selector
-                DropdownButtonFormField<int>(
-                  value: employeeId,
-                  decoration: const InputDecoration(labelText: 'العامل'),
-                  items: allEmployees.map<DropdownMenuItem<int>>((e) {
-                    return DropdownMenuItem<int>(
-                      value: e['id'] as int,
-                      child: Text('${e['first_name']} ${e['last_name']}'),
+                // Employee searchable selector
+                Autocomplete<Map<String, dynamic>>(
+                  optionsBuilder: (TextEditingValue textEditingValue) async {
+                    final searchQuery = textEditingValue.text.toLowerCase();
+                    final employees = await _fetchEmployeesByQuery(searchQuery);
+                    return employees.cast<Map<String, dynamic>>();
+                  },
+                  displayStringForOption: (option) => '${option['first_name']} ${option['last_name']}',
+                  fieldViewBuilder: (
+                    BuildContext context,
+                    TextEditingController textEditingController,
+                    FocusNode focusNode,
+                    VoidCallback onFieldSubmitted,
+                  ) {
+                    // Set initial value if editing
+                    if (initial != null && textEditingController.text.isEmpty) {
+                      final initialEmp = allEmployees.firstWhere(
+                        (e) => e['id'] == employeeId,
+                        orElse: () => {},
+                      );
+                      if (initialEmp.isNotEmpty) {
+                        textEditingController.text = '${initialEmp['first_name']} ${initialEmp['last_name']}';
+                      }
+                    }
+                    
+                    return TextFormField(
+                      controller: textEditingController,
+                      focusNode: focusNode,
+                      decoration: InputDecoration(
+                        labelText: 'العامل',
+                        suffixIcon: textEditingController.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  textEditingController.clear();
+                                  setState(() {
+                                    employeeId = null;
+                                    hasActiveLoan = false;
+                                    nextAvailable = null;
+                                  });
+                                },
+                              )
+                            : null,
+                      ),
+                      validator: (v) => employeeId == null ? 'يرجى اختيار العامل' : null,
                     );
-                  }).toList(),
-                  onChanged: (v) async {
+                  },
+                  onSelected: (Map<String, dynamic> option) async {
                     setState(() {
-                      employeeId = v;
-                      // reset block state when changing employee
+                      employeeId = option['id'] as int;
                       hasActiveLoan = false;
                       nextAvailable = null;
                     });
-                    if (v != null && initial == null) {
+                    
+                    // Check loan status for new loans
+                    if (initial == null) {
                       final res = await http.get(
-                        Uri.parse('${globalServerUri.toString()}/employees/loans/check/$v')
+                        Uri.parse('${globalServerUri.toString()}/employees/loans/check/$employeeId')
                       );
                       if (res.statusCode == 200) {
                         final d = jsonDecode(res.body);
@@ -967,7 +1041,35 @@ final pieceEmpRes = await http.get(
                       }
                     }
                   },
-                  validator: (v) => v == null ? 'يرجى اختيار العامل' : null,
+                  optionsViewBuilder: (
+                    BuildContext context,
+                    AutocompleteOnSelected<Map<String, dynamic>> onSelected,
+                    Iterable<Map<String, dynamic>> options,
+                  ) {
+                    return Align(
+                      alignment: Alignment.topRight,
+                      child: Material(
+                        elevation: 4.0,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: options.length,
+                            itemBuilder: (BuildContext context, int index) {
+                              final option = options.elementAt(index);
+                              return GestureDetector(
+                                onTap: () => onSelected(option),
+                                child: ListTile(
+                                  title: Text('${option['first_name']} ${option['last_name']}'),
+                                  subtitle: Text('${option['phone'] ?? ''} - ${option['role'] ?? ''}'),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
 
                 // Warning block message
@@ -1078,111 +1180,186 @@ final pieceEmpRes = await http.get(
 }
 
 
-  Future<void> addOrEditPiece({Map? initial}) async {
-    int? employeeId = initial?['employee_id'] as int?;
-    int? modelId = initial?['model_id'] as int?;
-    final qtyController = TextEditingController(text: initial?['quantity']?.toString() ?? '');
-    final priceController = TextEditingController(text: initial?['piece_price']?.toString() ?? '');
-    DateTime selectedDate = initial != null && initial['record_date'] != null ? DateTime.parse(initial['record_date']) : DateTime.now();
-    final _formKey = GlobalKey<FormState>();
+  Future<void> addOrEditPiece({ Map? initial }) async {
+  int? employeeId = initial?['employee_id'] as int?;
+  int? modelId    = initial?['model_id']    as int?;
+  final qtyController   = TextEditingController(text: initial?['quantity']?.toString()   ?? '');
+  final priceController = TextEditingController(text: initial?['piece_price']?.toString() ?? '');
+  DateTime selectedDate = initial != null && initial['record_date'] != null
+      ? DateTime.parse(initial['record_date'])
+      : DateTime.now();
+  final _formKey = GlobalKey<FormState>();
 
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setState) {
-          return AlertDialog(
-            title: Text(initial == null ? 'إضافة قطعة' : 'تعديل قطعة'),
-            content: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<int>(
-                    value: employeeId,
-                    decoration: const InputDecoration(labelText: 'العامل'),
-                    items: pieceEmployees.map<DropdownMenuItem<int>>((e) {
-                      return DropdownMenuItem<int>(value: e['id'] as int, child: Text('${e['first_name']} ${e['last_name']}'));
-                    }).toList(),
-                    onChanged: (v) => setState(() => employeeId = v),
-                    validator: (v) => v == null ? 'يرجى اختيار العامل' : null,
-                  ),
-                  DropdownButtonFormField<int>(
-                    value: modelId,
-                    decoration: const InputDecoration(labelText: 'الموديل'),
-                    items: allModels.map<DropdownMenuItem<int>>((m) {
-                      return DropdownMenuItem<int>(value: m['id'] as int, child: Text(m['name']));
-                    }).toList(),
-                    onChanged: (v) => setState(() => modelId = v),
-                    validator: (v) => v == null ? 'يرجى اختيار الموديل' : null,
-                  ),
-                  TextFormField(
-                    controller: qtyController,
-                    decoration: const InputDecoration(labelText: 'الكمية'),
-                    keyboardType: TextInputType.number,
-                    validator: (v) {
-                      if (v == null || v.isEmpty) return 'مطلوب';
-                      final numVal = int.tryParse(v);
-                      if (numVal == null || numVal <= 0) return 'يجب أن تكون كمية إيجابية';
-                      return null;
-                    },
-                  ),
-                  TextFormField(
-                    controller: priceController,
-                    decoration: const InputDecoration(labelText: 'سعر القطعة'),
-                    keyboardType: TextInputType.number,
-                    validator: (v) {
-                      if (v == null || v.isEmpty) return 'مطلوب';
-                      final numVal = num.tryParse(v);
-                      if (numVal == null || numVal <= 0) return 'يجب أن يكون سعر إيجابي';
-                      return null;
-                    },
-                  ),
-                  Text('تاريخ القطعة: ${selectedDate.toLocal().toString().substring(0, 10)}'),
-                  ElevatedButton(
-                    child: const Text('اختر التاريخ'),
-                    onPressed: () async {
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: selectedDate,
-                        firstDate: DateTime(2000),
-                        lastDate: DateTime.now(),
-                        locale: const Locale('ar', 'AR'),
-                      );
-                      if (picked != null && picked != selectedDate) setState(() => selectedDate = picked);
-                    },
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  if (_formKey.currentState!.validate()) {
-                    final data = {
-                      'employee_id': employeeId,
-                      'model_id': modelId,
-                      'quantity': int.tryParse(qtyController.text) ?? 0,
-                      'piece_price': num.tryParse(priceController.text) ?? 0,
-                      'record_date': selectedDate.toIso8601String(),
-                    };
-                    if (initial == null) {
-                      http.post(Uri.parse(_piecesUrl), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
-                    } else {
-                      http.put(Uri.parse('${globalServerUri.toString()}/employees/pieces/${initial['id']}'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (context, setState) {
+        return AlertDialog(
+          title: Text(initial == null ? 'إضافة قطعة' : 'تعديل قطعة'),
+          content: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // ◀️ LOCAL autocomplete over pieceEmployees, properly cast
+                Autocomplete<Map<String, dynamic>>(
+                  optionsBuilder: (TextEditingValue textEditingValue) {
+                    final q = textEditingValue.text.toLowerCase();
+                    return pieceEmployees
+                        .cast<Map<String, dynamic>>()            // cast to the right type
+                        .where((emp) {
+                          final name = '${emp['first_name']} ${emp['last_name']}'.toLowerCase();
+                          return name.contains(q);
+                        });
+                  },
+                  displayStringForOption: (opt) => '${opt['first_name']} ${opt['last_name']}',
+                  fieldViewBuilder: (context, tc, fn, onSubmitted) {
+                    if (initial != null && tc.text.isEmpty) {
+                      final initEmp = pieceEmployees
+                          .cast<Map<String, dynamic>>()
+                          .firstWhere((e) => e['id'] == employeeId, orElse: () => {});
+                      if (initEmp.isNotEmpty) {
+                        tc.text = '${initEmp['first_name']} ${initEmp['last_name']}';
+                      }
                     }
-                    Navigator.pop(context);
-                    fetchDataSection();
-                  }
-                },
-                child: const Text('حفظ'),
-              ),
-              TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-            ],
-          );
-        },
-      ),
-    );
-  }
+                    return TextFormField(
+                      controller: tc,
+                      focusNode: fn,
+                      decoration: InputDecoration(
+                        labelText: 'العامل',
+                        suffixIcon: tc.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  tc.clear();
+                                  setState(() => employeeId = null);
+                                },
+                              )
+                            : null,
+                      ),
+                      validator: (_) => employeeId == null ? 'يرجى اختيار العامل' : null,
+                    );
+                  },
+                  onSelected: (opt) => setState(() => employeeId = opt['id'] as int),
+                  optionsViewBuilder: (context, onSelected, options) {
+                    return Align(
+                      alignment: Alignment.topRight,
+                      child: Material(
+                        elevation: 4,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
+                          child: ListView.builder(
+                            itemCount: options.length,
+                            itemBuilder: (ctx, i) {
+                              final opt = options.elementAt(i);
+                              return ListTile(
+                                title: Text('${opt['first_name']} ${opt['last_name']}'),
+                                subtitle: Text('${opt['phone'] ?? ''} - ${opt['role'] ?? ''}'),
+                                onTap: () => onSelected(opt),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+
+                // model dropdown
+                DropdownButtonFormField<int>(
+                  value: modelId,
+                  decoration: const InputDecoration(labelText: 'الموديل'),
+                  items: allModels.map((m) {
+                    return DropdownMenuItem(
+                      value: m['id'] as int,
+                      child: Text(m['name']),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setState(() => modelId = v),
+                  validator: (v) => v == null ? 'يرجى اختيار الموديل' : null,
+                ),
+
+                // quantity
+                TextFormField(
+                  controller: qtyController,
+                  decoration: const InputDecoration(labelText: 'الكمية'),
+                  keyboardType: TextInputType.number,
+                  validator: (v) {
+                    final n = int.tryParse(v ?? '');
+                    if (n == null || n <= 0) return 'يجب أن تكون كمية إيجابية';
+                    return null;
+                  },
+                ),
+
+                // price
+                TextFormField(
+                  controller: priceController,
+                  decoration: const InputDecoration(labelText: 'سعر القطعة'),
+                  keyboardType: TextInputType.number,
+                  validator: (v) {
+                    final n = num.tryParse(v ?? '');
+                    if (n == null || n <= 0) return 'يجب أن يكون سعر إيجابي';
+                    return null;
+                  },
+                ),
+
+                // date picker
+                Text('تاريخ القطعة: ${selectedDate.toLocal().toString().split(' ')[0]}'),
+                ElevatedButton(
+                  child: const Text('اختر التاريخ'),
+                  onPressed: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: selectedDate,
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime.now(),
+                      locale: const Locale('ar', 'AR'),
+                    );
+                    if (picked != null) setState(() => selectedDate = picked);
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              child: const Text('إلغاء'),
+              onPressed: () => Navigator.pop(context),
+            ),
+            ElevatedButton(
+              child: const Text('حفظ'),
+              onPressed: () {
+                if (!_formKey.currentState!.validate()) return;
+                final data = {
+                  'employee_id': employeeId,
+                  'model_id'   : modelId,
+                  'quantity'   : int.tryParse(qtyController.text)   ?? 0,
+                  'piece_price': num.tryParse(priceController.text) ?? 0,
+                  'record_date': selectedDate.toIso8601String(),
+                };
+                if (initial == null) {
+                  http.post(
+                    Uri.parse(_piecesUrl),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(data),
+                  );
+                } else {
+                  http.put(
+                    Uri.parse('${globalServerUri.toString()}/employees/pieces/${initial['id']}'),
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(data),
+                  );
+                }
+                Navigator.pop(context);
+                fetchDataSection();
+              },
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
 
   Future<void> deleteLoan(int id) async {
     await http.delete(Uri.parse('${globalServerUri.toString()}/employees/loans/$id'));
@@ -1211,15 +1388,83 @@ final pieceEmpRes = await http.get(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  DropdownButtonFormField<int>(
-                    value: employeeId,
-                    decoration: const InputDecoration(labelText: 'العامل'),
-                    items: allEmployees.map<DropdownMenuItem<int>>((e) {
-                      return DropdownMenuItem<int>(value: e['id'] as int, child: Text('${e['first_name']} ${e['last_name']}'));
-                    }).toList(),
-                    onChanged: (v) => setState(() => employeeId = v),
-                    validator: (v) => v == null ? 'يرجى اختيار العامل' : null,
+                  // Employee searchable selector
+                  Autocomplete<Map<String, dynamic>>(
+                    optionsBuilder: (TextEditingValue textEditingValue) async {
+                      final searchQuery = textEditingValue.text.toLowerCase();
+                      final employees = await _fetchEmployeesByQuery(searchQuery);
+                      return employees.cast<Map<String, dynamic>>();
+                    },
+                    displayStringForOption: (option) => '${option['first_name']} ${option['last_name']}',
+                    fieldViewBuilder: (
+                      BuildContext context,
+                      TextEditingController textEditingController,
+                      FocusNode focusNode,
+                      VoidCallback onFieldSubmitted,
+                    ) {
+                      // Set initial value if editing
+                      if (initial != null && textEditingController.text.isEmpty) {
+                        final initialEmp = allEmployees.firstWhere(
+                          (e) => e['id'] == employeeId,
+                          orElse: () => {},
+                        );
+                        if (initialEmp.isNotEmpty) {
+                          textEditingController.text = '${initialEmp['first_name']} ${initialEmp['last_name']}';
+                        }
+                      }
+                      
+                      return TextFormField(
+                        controller: textEditingController,
+                        focusNode: focusNode,
+                        decoration: InputDecoration(
+                          labelText: 'العامل',
+                          suffixIcon: textEditingController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    textEditingController.clear();
+                                    setState(() => employeeId = null);
+                                  },
+                                )
+                              : null,
+                        ),
+                        validator: (v) => employeeId == null ? 'يرجى اختيار العامل' : null,
+                      );
+                    },
+                    onSelected: (Map<String, dynamic> option) {
+                      setState(() => employeeId = option['id'] as int);
+                    },
+                    optionsViewBuilder: (
+                      BuildContext context,
+                      AutocompleteOnSelected<Map<String, dynamic>> onSelected,
+                      Iterable<Map<String, dynamic>> options,
+                    ) {
+                      return Align(
+                        alignment: Alignment.topRight,
+                        child: Material(
+                          elevation: 4.0,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
+                            child: ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: options.length,
+                              itemBuilder: (BuildContext context, int index) {
+                                final option = options.elementAt(index);
+                                return GestureDetector(
+                                  onTap: () => onSelected(option),
+                                  child: ListTile(
+                                    title: Text('${option['first_name']} ${option['last_name']}'),
+                                    subtitle: Text('${option['phone'] ?? ''} - ${option['role'] ?? ''}'),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
+                  
                   TextFormField(
                     controller: amountController,
                     decoration: const InputDecoration(labelText: 'المبلغ'),
@@ -2343,6 +2588,16 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
     }
   }
 
+  // Helper method to fetch employees by search query
+  Future<List<dynamic>> _fetchEmployeesByQuery(String searchQuery) async {
+    if (searchQuery.isEmpty) return widget.employees;
+    
+    return widget.employees.where((emp) {
+      final fullName = '${emp['first_name']} ${emp['last_name']}'.toLowerCase();
+      return fullName.contains(searchQuery.toLowerCase());
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -2352,13 +2607,83 @@ class _AttendanceDialogState extends State<AttendanceDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            DropdownButtonFormField<int>(
-              value: employeeId,
-              decoration: const InputDecoration(labelText: 'العامل'),
-              items: widget.employees.map((e) => DropdownMenuItem<int>(value: e['id'] as int, child: Text('${e['first_name']} ${e['last_name']}'))).toList(),
-              onChanged: (v) => setState(() => employeeId = v),
-              validator: (v) => v == null ? 'يرجى اختيار العامل' : null,
+            // Employee searchable selector
+            Autocomplete<Map<String, dynamic>>(
+              optionsBuilder: (TextEditingValue textEditingValue) async {
+                final searchQuery = textEditingValue.text.toLowerCase();
+                final employees = await _fetchEmployeesByQuery(searchQuery);
+                return employees.cast<Map<String, dynamic>>();
+              },
+              displayStringForOption: (option) => '${option['first_name']} ${option['last_name']}',
+              fieldViewBuilder: (
+                BuildContext context,
+                TextEditingController textEditingController,
+                FocusNode focusNode,
+                VoidCallback onFieldSubmitted,
+              ) {
+                // Set initial value if editing
+                if (widget.initial != null && textEditingController.text.isEmpty) {
+                  final initialEmp = widget.employees.firstWhere(
+                    (e) => e['id'] == employeeId,
+                    orElse: () => {},
+                  );
+                  if (initialEmp.isNotEmpty) {
+                    textEditingController.text = '${initialEmp['first_name']} ${initialEmp['last_name']}';
+                  }
+                }
+                
+                return TextFormField(
+                  controller: textEditingController,
+                  focusNode: focusNode,
+                  decoration: InputDecoration(
+                    labelText: 'العامل',
+                    suffixIcon: textEditingController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              textEditingController.clear();
+                              setState(() => employeeId = null);
+                            },
+                          )
+                        : null,
+                  ),
+                  validator: (v) => employeeId == null ? 'يرجى اختيار العامل' : null,
+                );
+              },
+              onSelected: (Map<String, dynamic> option) {
+                setState(() => employeeId = option['id'] as int);
+              },
+              optionsViewBuilder: (
+                BuildContext context,
+                AutocompleteOnSelected<Map<String, dynamic>> onSelected,
+                Iterable<Map<String, dynamic>> options,
+              ) {
+                return Align(
+                  alignment: Alignment.topRight,
+                  child: Material(
+                    elevation: 4.0,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: options.length,
+                        itemBuilder: (BuildContext context, int index) {
+                          final option = options.elementAt(index);
+                          return GestureDetector(
+                            onTap: () => onSelected(option),
+                            child: ListTile(
+                              title: Text('${option['first_name']} ${option['last_name']}'),
+                              subtitle: Text('${option['phone'] ?? ''} - ${option['role'] ?? ''}'),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
+            
             ListTile(
               title: Text('التاريخ: ${date.toLocal().toIso8601String().substring(0, 10)}'),
               trailing: const Icon(Icons.calendar_today),

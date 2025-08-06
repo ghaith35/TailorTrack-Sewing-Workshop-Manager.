@@ -381,33 +381,33 @@ class _SewingWarehouseSectionState extends State<SewingWarehouseSection> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextFormField(
-                  controller: modelIdCtl,
-                  decoration: const InputDecoration(labelText: 'معرّف الموديل'),
-                  keyboardType: TextInputType.number,
-                  validator: (v) {
-                    final n = int.tryParse(v ?? '');
-                    return (n == null || n <= 0) ? 'أدخل معرف موديل صالح' : null;
-                  },
-                ),
-                if (isEdit) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      const Text('المقاسات: ',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      Text(sizesDisplay),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      const Text('عدد المقاسات: ',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      Text(nbrSizesDisplay),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 8),
+                // TextFormField(
+                //   controller: modelIdCtl,
+                //   decoration: const InputDecoration(labelText: 'معرّف الموديل'),
+                //   keyboardType: TextInputType.number,
+                //   validator: (v) {
+                //     final n = int.tryParse(v ?? '');
+                //     return (n == null || n <= 0) ? 'أدخل معرف موديل صالح' : null;
+                //   },
+                // ),
+                // if (isEdit) ...[
+                //   const SizedBox(height: 8),
+                //   Row(
+                //     children: [
+                //       const Text('المقاسات: ',
+                //           style: TextStyle(fontWeight: FontWeight.bold)),
+                //       Text(sizesDisplay),
+                //     ],
+                //   ),
+                //   Row(
+                //     children: [
+                //       const Text('عدد المقاسات: ',
+                //           style: TextStyle(fontWeight: FontWeight.bold)),
+                //       Text(nbrSizesDisplay),
+                //     ],
+                //   ),
+                // ],
+                // const SizedBox(height: 8),
                 TextFormField(
                   controller: qtyCtl,
                   decoration: const InputDecoration(labelText: 'الكمية'),

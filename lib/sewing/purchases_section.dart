@@ -11,7 +11,7 @@ class SewingPurchasesSection extends StatefulWidget {
 }
 
 class _SewingPurchasesSectionState extends State<SewingPurchasesSection> {
-String get _baseUrl => '${globalServerUri.toString()}/purchases';
+  String get _baseUrl => '${globalServerUri.toString()}/purchases';
 
   List<Map<String, dynamic>> _purchases = [];
   List<Map<String, dynamic>> _filtered = [];
@@ -23,7 +23,7 @@ String get _baseUrl => '${globalServerUri.toString()}/purchases';
   final TextEditingController _searchController = TextEditingController();
   bool _isLoading = false;
   int? _selectedId;
-  int? _selectedSeasonId; // null means "ALL"
+  int? _selectedSeasonId;
 
   @override
   void initState() {
@@ -47,12 +47,9 @@ String get _baseUrl => '${globalServerUri.toString()}/purchases';
         return id.contains(q) || sup.contains(q);
       }).toList();
 
-      // Apply season filter if selected
       if (_selectedSeasonId != null) {
         tempFiltered = tempFiltered.where((p) {
-          // This is a simple client-side filter
-          // For better performance, implement server-side filtering
-          return true; // Placeholder - implement season filtering logic
+          return true;
         }).toList();
       }
 
@@ -101,7 +98,6 @@ String get _baseUrl => '${globalServerUri.toString()}/purchases';
         });
       }
     } catch (_) {
-      // If seasons endpoint doesn't exist, just continue without it
       _seasons = [];
     }
   }
@@ -135,21 +131,19 @@ String get _baseUrl => '${globalServerUri.toString()}/purchases';
 
   Future<void> _fetchPurchases() async {
     String url = _baseUrl;
-    
-    // Use season filtering only if the endpoint exists and season is selected
+
     if (_selectedSeasonId != null && _seasons.isNotEmpty) {
       try {
         url = '$_baseUrl/by_season/$_selectedSeasonId';
         final testRes = await http.get(Uri.parse(url));
         if (testRes.statusCode != 200) {
-          // Fallback to main endpoint
           url = _baseUrl;
         }
       } catch (_) {
         url = _baseUrl;
       }
     }
-    
+
     final res = await http.get(Uri.parse(url));
     if (res.statusCode == 200) {
       final list = (jsonDecode(res.body) as List).cast<Map<String, dynamic>>();
@@ -175,388 +169,490 @@ String get _baseUrl => '${globalServerUri.toString()}/purchases';
     );
   }
 
-  Future<void> _showPurchaseDialog({Map<String, dynamic>? initial}) async {
-  await Future.wait([
-    _fetchMaterials(),
-    _fetchMaterialTypes(),
-    _fetchSuppliers(),
-  ]);
-
-  DateTime purchaseDate = initial != null && initial['purchase_date'] != null
-      ? DateTime.parse(initial['purchase_date'])
-      : DateTime.now();
-
-  int? selectedSupplierId = initial?['supplier_id'] as int?;
-  List<Map<String, dynamic>> items = initial == null
-      ? []
-      : List<Map<String, dynamic>>.from(initial['items']);
-
-  // Driver controller
-  String driver = initial?['driver'] ?? 'غير محدد';
-  final TextEditingController driverController = TextEditingController(text: driver);
-
-  double _totalAmount() {
-    return items.fold<double>(0.0, (sum, it) {
-      final q = _parseDouble(it['quantity']) ?? 0.0;
-      final p = _parseDouble(it['unit_price']) ?? 0.0;
-      return sum + q * p;
-    });
+  void _showSnackBar(String message, {Color color = Colors.red}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: color),
+    );
   }
 
-  double amountPaidOnCreation = _parseDouble(initial?['amount_paid_on_creation']) ?? 0.0;
-  final TextEditingController amountController = TextEditingController(text: amountPaidOnCreation.toStringAsFixed(2));
-  String paymentType = amountPaidOnCreation >= _totalAmount() && _totalAmount() > 0 ? 'cash' : 'debt';
+  void _showMaterialImagePopup(String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: 400, maxHeight: 400),
+          child: Image.network(
+            '${globalServerUri.toString()}$imageUrl',
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 100),
+          ),
+        ),
+      ),
+    );
+  }
 
-  await showDialog(
-    context: context,
-    builder: (_) => StatefulBuilder(
-      builder: (context, setDialogState) {
-        void updatePaymentType(String newType) {
-          setDialogState(() {
-            paymentType = newType;
-            if (newType == 'cash') {
-              amountPaidOnCreation = _totalAmount();
-              amountController.text = amountPaidOnCreation.toStringAsFixed(2);
-            } else {
-              amountPaidOnCreation = 0.0;
-              amountController.text = '0.00';
-            }
-          });
-        }
+  Future<void> _showPurchaseDialog({Map<String, dynamic>? initial}) async {
+    await Future.wait([
+      _fetchMaterials(),
+      _fetchMaterialTypes(),
+      _fetchSuppliers(),
+    ]);
 
-        return AlertDialog(
-          title: Text(initial == null ? 'إضافة شراء جديد' : 'تعديل الشراء'),
-          content: SingleChildScrollView(
-            child: SizedBox(
-              width: 500,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // --- Basic Info Card (with driver) ---
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('المعلومات الأساسية', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                          SizedBox(height: 12),
-                          Row(
-                            children: [
-                              const Text('التاريخ:', style: TextStyle(fontWeight: FontWeight.w500)),
-                              const SizedBox(width: 8),
-                              Text('${purchaseDate.toLocal()}'.split(' ')[0]),
-                              const Spacer(),
-                              ElevatedButton(
-                                onPressed: () async {
-                                  final picked = await showDatePicker(
-                                    context: context,
-                                    initialDate: purchaseDate,
-                                    firstDate: DateTime(2022),
-                                    lastDate: DateTime(2100),
-                                  );
-                                  if (picked != null) {
-                                    setDialogState(() => purchaseDate = picked);
+    DateTime purchaseDate = initial != null && initial['purchase_date'] != null
+        ? DateTime.parse(initial['purchase_date'])
+        : DateTime.now();
+
+    int? selectedSupplierId = initial?['supplier_id'] as int?;
+    List<Map<String, dynamic>> items = initial == null
+        ? []
+        : List<Map<String, dynamic>>.from(initial['items']);
+
+    String driver = initial?['driver'] ?? 'غير محدد';
+    final TextEditingController driverController = TextEditingController(text: driver);
+
+    double _totalAmount() {
+      return items.fold<double>(0.0, (sum, it) {
+        final q = _parseDouble(it['quantity']) ?? 0.0;
+        final p = _parseDouble(it['unit_price']) ?? 0.0;
+        return sum + q * p;
+      });
+    }
+
+    double amountPaidOnCreation = _parseDouble(initial?['amount_paid_on_creation']) ?? 0.0;
+    final TextEditingController amountController = TextEditingController(text: amountPaidOnCreation.toStringAsFixed(2));
+    String paymentType = amountPaidOnCreation >= _totalAmount() && _totalAmount() > 0 ? 'cash' : 'debt';
+
+    await showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          void updatePaymentType(String newType) {
+            setDialogState(() {
+              paymentType = newType;
+              if (newType == 'cash') {
+                amountPaidOnCreation = _totalAmount();
+                amountController.text = amountPaidOnCreation.toStringAsFixed(2);
+              } else {
+                amountPaidOnCreation = 0.0;
+                amountController.text = '0.00';
+              }
+            });
+          }
+
+          return AlertDialog(
+            title: Text(initial == null ? 'إضافة شراء جديد' : 'تعديل الشراء'),
+            content: SingleChildScrollView(
+              child: SizedBox(
+                width: 500,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('المعلومات الأساسية', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                            SizedBox(height: 12),
+                            Row(
+                              children: [
+                                const Text('التاريخ:', style: TextStyle(fontWeight: FontWeight.w500)),
+                                const SizedBox(width: 8),
+                                Text('${purchaseDate.toLocal()}'.split(' ')[0]),
+                                const Spacer(),
+                                ElevatedButton(
+                                  onPressed: () async {
+                                    final picked = await showDatePicker(
+                                      context: context,
+                                      initialDate: purchaseDate,
+                                      firstDate: DateTime(2022),
+                                      lastDate: DateTime(2100),
+                                    );
+                                    if (picked != null) {
+                                      setDialogState(() => purchaseDate = picked);
+                                    }
+                                  },
+                                  child: const Text('تغيير التاريخ'),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            DropdownButtonFormField<int>(
+                              value: selectedSupplierId,
+                              decoration: const InputDecoration(labelText: 'اختر المورد'),
+                              items: _suppliers.map<DropdownMenuItem<int>>((s) {
+                                return DropdownMenuItem(
+                                  value: s['id'] as int,
+                                  child: Text(s['name'] as String),
+                                );
+                              }).toList(),
+                              onChanged: (val) => setDialogState(() => selectedSupplierId = val),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: driverController,
+                              decoration: const InputDecoration(
+                                labelText: 'اسم السائق',
+                                hintText: 'أدخل اسم السائق',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text('المواد المضافة', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                Text(
+                                  'الإجمالي: ${_totalAmount().toStringAsFixed(2)} دج',
+                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            if (items.isNotEmpty)
+                              ...items.asMap().entries.map((e) {
+                                final idx = e.key;
+                                final item = e.value;
+                                final material = _materials.firstWhere(
+                                  (m) => m['id'] == item['material_id'],
+                                  orElse: () => {'code': 'غير محدد', 'type_name': ''},
+                                );
+                                final subtotal = (_parseDouble(item['quantity']) ?? 0.0) * (_parseDouble(item['unit_price']) ?? 0.0);
+
+                                return Card(
+                                  color: Colors.grey[50],
+                                  child: ListTile(
+                                    title: Text('${material['code']} (${material['type_name'] ?? ''})'),
+                                    subtitle: Text('الكمية: ${item['quantity']} × ${item['unit_price']} = ${subtotal.toStringAsFixed(2)} دج'),
+                                    trailing: IconButton(
+                                      icon: const Icon(Icons.delete, color: Colors.red),
+                                      onPressed: () => setDialogState(() => items.removeAt(idx)),
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            const SizedBox(height: 12),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: ElevatedButton.icon(
+                                icon: const Icon(Icons.add),
+                                label: const Text('إضافة مادة'),
+                                onPressed: () => _showAddMaterialDialog(setDialogState, items),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('طريقة الدفع', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                            const SizedBox(height: 8),
+                            ListTile(
+                              title: const Text('شراء بالدين'),
+                              leading: Radio<String>(
+                                value: 'debt',
+                                groupValue: paymentType,
+                                onChanged: (v) => updatePaymentType(v!),
+                              ),
+                            ),
+                            ListTile(
+                              title: const Text('شراء نقدي'),
+                              leading: Radio<String>(
+                                value: 'cash',
+                                groupValue: paymentType,
+                                onChanged: (v) => updatePaymentType(v!),
+                              ),
+                            ),
+                            if (paymentType == 'cash' && items.isNotEmpty)
+                              TextField(
+                                controller: amountController,
+                                decoration: InputDecoration(
+                                  labelText: 'دفعة أولى (الحد الأقصى: ${_totalAmount().toStringAsFixed(2)})',
+                                ),
+                                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                onChanged: (v) {
+                                  final amt = double.tryParse(v) ?? 0.0;
+                                  final total = _totalAmount();
+                                  if (amt > total) {
+                                    amountController.text = total.toStringAsFixed(2);
+                                    amountPaidOnCreation = total;
+                                  } else {
+                                    amountPaidOnCreation = amt;
                                   }
                                 },
-                                child: const Text('تغيير التاريخ'),
                               ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          DropdownButtonFormField<int>(
-                            value: selectedSupplierId,
-                            decoration: const InputDecoration(labelText: 'اختر المورد'),
-                            items: _suppliers.map<DropdownMenuItem<int>>((s) {
-                              return DropdownMenuItem(
-                                value: s['id'] as int,
-                                child: Text(s['name'] as String),
-                              );
-                            }).toList(),
-                            onChanged: (val) => setDialogState(() => selectedSupplierId = val),
-                          ),
-                          const SizedBox(height: 16),
-                          TextField(
-                            controller: driverController,
-                            decoration: const InputDecoration(
-                              labelText: 'اسم السائق',
-                              hintText: 'أدخل اسم السائق',
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // --- Materials Card ---
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text('المواد المضافة', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                              Text(
-                                'الإجمالي: ${_totalAmount().toStringAsFixed(2)} دج',
-                                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          if (items.isNotEmpty)
-                            ...items.asMap().entries.map((e) {
-                              final idx = e.key;
-                              final item = e.value;
-                              final material = _materials.firstWhere(
-                                (m) => m['id'] == item['material_id'],
-                                orElse: () => {'code': 'غير محدد', 'type_name': ''},
-                              );
-                              final subtotal = (_parseDouble(item['quantity']) ?? 0.0) * (_parseDouble(item['unit_price']) ?? 0.0);
-
-                              return Card(
-                                color: Colors.grey[50],
-                                child: ListTile(
-                                  title: Text('${material['code']} (${material['type_name'] ?? ''})'),
-                                  subtitle: Text('الكمية: ${item['quantity']} × ${item['unit_price']} = ${subtotal.toStringAsFixed(2)} دج'),
-                                  trailing: IconButton(
-                                    icon: const Icon(Icons.delete, color: Colors.red),
-                                    onPressed: () => setDialogState(() => items.removeAt(idx)),
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                          const SizedBox(height: 12),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: ElevatedButton.icon(
-                              icon: const Icon(Icons.add),
-                              label: const Text('إضافة مادة'),
-                              onPressed: () => _showAddMaterialDialog(setDialogState, items),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // --- Payment Card ---
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('طريقة الدفع', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                          const SizedBox(height: 8),
-                          ListTile(
-                            title: const Text('شراء بالدين'),
-                            leading: Radio<String>(
-                              value: 'debt',
-                              groupValue: paymentType,
-                              onChanged: (v) => updatePaymentType(v!),
-                            ),
-                          ),
-                          ListTile(
-                            title: const Text('شراء نقدي'),
-                            leading: Radio<String>(
-                              value: 'cash',
-                              groupValue: paymentType,
-                              onChanged: (v) => updatePaymentType(v!),
-                            ),
-                          ),
-                          if (paymentType == 'cash' && items.isNotEmpty)
-                            TextField(
-                              controller: amountController,
-                              decoration: InputDecoration(
-                                labelText: 'دفعة أولى (الحد الأقصى: ${_totalAmount().toStringAsFixed(2)})',
-                              ),
-                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                              onChanged: (v) {
-                                final amt = double.tryParse(v) ?? 0.0;
-                                final total = _totalAmount();
-                                if (amt > total) {
-                                  amountController.text = total.toStringAsFixed(2);
-                                  amountPaidOnCreation = total;
-                                } else {
-                                  amountPaidOnCreation = amt;
-                                }
-                              },
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (selectedSupplierId == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('يرجى اختيار المورد'), backgroundColor: Colors.red),
-                  );
-                  return;
-                }
-
-                if (items.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('يرجى إضافة مادة واحدة على الأقل'), backgroundColor: Colors.red),
-                  );
-                  return;
-                }
-
-                final total = _totalAmount();
-                if (total <= 0) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('إجمالي الشراء يجب أن يكون أكبر من صفر'), backgroundColor: Colors.red),
-                  );
-                  return;
-                }
-
-                if (paymentType == 'cash' && amountPaidOnCreation > total) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('الدفعة الأولى لا يمكن أن تكون أكبر من إجمالي الشراء'), backgroundColor: Colors.red),
-                  );
-                  return;
-                }
-
-                final body = jsonEncode({
-                  'purchase_date': purchaseDate.toIso8601String(),
-                  'supplier_id': selectedSupplierId,
-                  'amount_paid_on_creation': paymentType == 'cash' ? amountPaidOnCreation : 0.0,
-                  'driver': driverController.text.trim().isEmpty ? 'غير محدد' : driverController.text.trim(),
-                  'items': items,
-                });
-
-                try {
-                  if (initial == null) {
-                    final response = await http.post(
-                      Uri.parse(_baseUrl),
-                      headers: {'Content-Type': 'application/json'},
-                      body: body,
-                    );
-                    if (response.statusCode == 200 || response.statusCode == 201) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('تم إضافة الشراء بنجاح!'), backgroundColor: Colors.green),
-                      );
-                      await _fetchAll();
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('فشل الإضافة: ${response.statusCode} ${response.body}'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
-                  } else {
-                    await http.put(
-                      Uri.parse('$_baseUrl/${initial['id']}'),
-                      headers: {'Content-Type': 'application/json'},
-                      body: body,
-                    );
-                    await http.post(
-                      Uri.parse('$_baseUrl/${initial['id']}/items'),
-                      headers: {'Content-Type': 'application/json'},
-                      body: jsonEncode({'items': items}),
-                    );
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('إلغاء'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (selectedSupplierId == null) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('تم تحديث الشراء بنجاح!'), backgroundColor: Colors.green),
+                      const SnackBar(content: Text('يرجى اختيار المورد'), backgroundColor: Colors.red),
                     );
+                    return;
                   }
 
-                  Navigator.pop(context);
-                  await _fetchAll();
-                } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('خطأ في الاتصال: $e'), backgroundColor: Colors.red),
-                  );
-                }
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
-        );
-      },
-    ),
-  );
-}
+                  if (items.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('يرجى إضافة مادة واحدة على الأقل'), backgroundColor: Colors.red),
+                    );
+                    return;
+                  }
 
+                  final total = _totalAmount();
+                  if (total <= 0) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('إجمالي الشراء يجب أن يكون أكبر من صفر'), backgroundColor: Colors.red),
+                    );
+                    return;
+                  }
 
-  void _showAddMaterialDialog(StateSetter setDialogState, List<Map<String, dynamic>> items) {
+                  if (paymentType == 'cash' && amountPaidOnCreation > total) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('الدفعة الأولى لا يمكن أن تكون أكبر من إجمالي الشراء'), backgroundColor: Colors.red),
+                    );
+                    return;
+                  }
+
+                  final body = jsonEncode({
+                    'purchase_date': purchaseDate.toIso8601String(),
+                    'supplier_id': selectedSupplierId,
+                    'amount_paid_on_creation': paymentType == 'cash' ? amountPaidOnCreation : 0.0,
+                    'driver': driverController.text.trim().isEmpty ? 'غير محدد' : driverController.text.trim(),
+                    'items': items,
+                  });
+
+                  try {
+                    if (initial == null) {
+                      final response = await http.post(
+                        Uri.parse(_baseUrl),
+                        headers: {'Content-Type': 'application/json'},
+                        body: body,
+                      );
+                      if (response.statusCode == 200 || response.statusCode == 201) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('تم إضافة الشراء بنجاح!'), backgroundColor: Colors.green),
+                        );
+                        await _fetchAll();
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('فشل الإضافة: ${response.statusCode} ${response.body}'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    } else {
+                      await http.put(
+                        Uri.parse('$_baseUrl/${initial['id']}'),
+                        headers: {'Content-Type': 'application/json'},
+                        body: body,
+                      );
+                      await http.post(
+                        Uri.parse('$_baseUrl/${initial['id']}/items'),
+                        headers: {'Content-Type': 'application/json'},
+                        body: jsonEncode({'items': items}),
+                      );
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('تم تحديث الشراء بنجاح!'), backgroundColor: Colors.green),
+                      );
+                    }
+
+                    Navigator.pop(context);
+                    await _fetchAll();
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('خطأ في الاتصال: $e'), backgroundColor: Colors.red),
+                    );
+                  }
+                },
+                child: const Text('حفظ'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showAddMaterialDialog(StateSetter setDialogState, List<Map<String, dynamic>> items) async {
     int? selectedTypeId;
     int? selectedMaterialId;
-    List<dynamic> filteredMaterials = [];
     double quantity = 0.0;
     double unitPrice = 0.0;
-
     final TextEditingController quantityController = TextEditingController();
     final TextEditingController priceController = TextEditingController();
+    String? searchQuery;
 
-    showDialog(
+    await showDialog(
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: const Text('إضافة مادة'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<int>(
-                value: selectedTypeId,
-                decoration: const InputDecoration(labelText: 'اختر نوع المادة'),
-                items: _materialTypes.map((type) {
-                  return DropdownMenuItem(
-                    value: type['id'] as int,
-                    child: Text(type['name'] as String),
-                  );
-                }).toList(),
-                onChanged: (val) async {
-                  selectedTypeId = val;
-                  filteredMaterials = await _fetchMaterialsByType(val!);
-                  setState(() {
-                    selectedMaterialId = null;
-                  });
-                },
-              ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<int>(
-                value: selectedMaterialId,
-                decoration: const InputDecoration(labelText: 'اختر المادة'),
-                items: filteredMaterials.map((m) {
-                  return DropdownMenuItem(
-                    value: m['id'] as int,
-                    child: Text(m['code'] as String),
-                  );
-                }).toList(),
-                onChanged: (val) => setState(() => selectedMaterialId = val),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: quantityController,
-                decoration: const InputDecoration(labelText: 'الكمية'),
-                keyboardType: TextInputType.number,
-                onChanged: (v) => quantity = double.tryParse(v) ?? 0.0,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: priceController,
-                decoration: const InputDecoration(labelText: 'سعر الوحدة'),
-                keyboardType: TextInputType.number,
-                onChanged: (v) => unitPrice = double.tryParse(v) ?? 0.0,
-              ),
-            ],
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<int>(
+                  value: selectedTypeId,
+                  decoration: const InputDecoration(labelText: 'اختر نوع المادة'),
+                  items: _materialTypes.map((type) {
+                    return DropdownMenuItem(
+                      value: type['id'] as int,
+                      child: Text(type['name'] as String),
+                    );
+                  }).toList(),
+                  onChanged: (val) async {
+                    setState(() {
+                      selectedTypeId = val;
+                      selectedMaterialId = null;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                Autocomplete<Map<String, dynamic>>(
+                  optionsBuilder: (TextEditingValue textEditingValue) async {
+                    searchQuery = textEditingValue.text.toLowerCase();
+                    if (selectedTypeId == null) return [];
+                    final materials = await _fetchMaterialsByType(selectedTypeId!, searchQuery!);
+                    return materials.cast<Map<String, dynamic>>();
+                  },
+                  displayStringForOption: (option) => '${option['code']} (${option['type_name'] ?? ''})',
+                  fieldViewBuilder: (
+                    BuildContext context,
+                    TextEditingController textEditingController,
+                    FocusNode focusNode,
+                    VoidCallback onFieldSubmitted,
+                  ) {
+                    return TextField(
+                      controller: textEditingController,
+                      focusNode: focusNode,
+                      decoration: InputDecoration(
+                        labelText: 'اختر المادة',
+                        suffixIcon: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (textEditingController.text.isNotEmpty)
+                              IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  textEditingController.clear();
+                                  setState(() => selectedMaterialId = null);
+                                },
+                              ),
+                            if (selectedMaterialId != null)
+                              IconButton(
+                                icon: const Icon(Icons.image, color: Colors.blue),
+                                onPressed: () async {
+                                  final materials = await _fetchMaterialsByType(selectedTypeId!, searchQuery ?? '');
+                                  final selectedMaterial = materials.firstWhere(
+                                    (m) => m['id'] == selectedMaterialId,
+                                    orElse: () => {},
+                                  );
+                                  final imageUrl = selectedMaterial['image_url'] as String?;
+                                  if (imageUrl != null && imageUrl.isNotEmpty) {
+                                    _showMaterialImagePopup(imageUrl);
+                                  } else {
+                                    _showSnackBar('لا توجد صورة لهذه المادة');
+                                  }
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                  onSelected: (Map<String, dynamic> option) {
+                    setState(() => selectedMaterialId = option['id'] as int);
+                  },
+                  optionsViewBuilder: (
+                    BuildContext context,
+                    AutocompleteOnSelected<Map<String, dynamic>> onSelected,
+                    Iterable<Map<String, dynamic>> options,
+                  ) {
+                    return Align(
+                      alignment: Alignment.topRight,
+                      child: Material(
+                        elevation: 4.0,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: options.length,
+                            itemBuilder: (BuildContext context, int index) {
+                              final option = options.elementAt(index);
+                              final imageUrl = option['image_url'] as String?;
+                              return GestureDetector(
+                                onTap: () => onSelected(option),
+                                child: ListTile(
+                                  leading: (imageUrl != null && imageUrl.isNotEmpty)
+                                      ? GestureDetector(
+                                          onTap: () => _showMaterialImagePopup(imageUrl),
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(4),
+                                            child: Image.network(
+                                              '${globalServerUri.toString()}$imageUrl',
+                                              width: 40,
+                                              height: 40,
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported),
+                                            ),
+                                          ),
+                                        )
+                                      : const Icon(Icons.image, size: 40, color: Colors.grey),
+                                  title: Text('${option['code']} (${option['type_name'] ?? ''})'),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: quantityController,
+                  decoration: const InputDecoration(labelText: 'الكمية'),
+                  keyboardType: TextInputType.number,
+                  onChanged: (v) => quantity = double.tryParse(v) ?? 0.0,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: priceController,
+                  decoration: const InputDecoration(labelText: 'سعر الوحدة'),
+                  keyboardType: TextInputType.number,
+                  onChanged: (v) => unitPrice = double.tryParse(v) ?? 0.0,
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -565,18 +661,25 @@ String get _baseUrl => '${globalServerUri.toString()}/purchases';
             ),
             ElevatedButton(
               onPressed: () {
-                if (selectedMaterialId != null && quantity > 0 && unitPrice > 0) {
-                  setDialogState(() => items.add({
-                        'material_id': selectedMaterialId,
-                        'quantity': quantity,
-                        'unit_price': unitPrice,
-                      }));
-                  Navigator.pop(context);
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('يرجى ملء جميع الحقول بقيم صحيحة'), backgroundColor: Colors.red),
-                  );
+                if (selectedMaterialId == null) {
+                  _showSnackBar('يرجى اختيار المادة');
+                  return;
                 }
+                if (quantity <= 0) {
+                  _showSnackBar('يرجى إدخال كمية صحيحة');
+                  return;
+                }
+                if (unitPrice <= 0) {
+                  _showSnackBar('يرجى إدخال سعر صحيح');
+                  return;
+                }
+
+                setDialogState(() => items.add({
+                      'material_id': selectedMaterialId,
+                      'quantity': quantity,
+                      'unit_price': unitPrice,
+                    }));
+                Navigator.pop(context);
               },
               child: const Text('إضافة'),
             ),
@@ -586,9 +689,12 @@ String get _baseUrl => '${globalServerUri.toString()}/purchases';
     );
   }
 
-  Future<List<dynamic>> _fetchMaterialsByType(int typeId) async {
+  Future<List<dynamic>> _fetchMaterialsByType(int typeId, String searchQuery) async {
     try {
-      final res = await http.get(Uri.parse('$_baseUrl/materials/by_type/$typeId'));
+      final uri = Uri.parse('$_baseUrl/materials/by_type/$typeId').replace(
+        queryParameters: searchQuery.isNotEmpty ? {'q': searchQuery} : null,
+      );
+      final res = await http.get(uri);
       if (res.statusCode == 200) {
         return jsonDecode(res.body);
       }
@@ -679,7 +785,6 @@ String get _baseUrl => '${globalServerUri.toString()}/purchases';
                             ),
                           ),
                           const SizedBox(height: 12),
-                          // Show season dropdown only if seasons are available
                           if (_seasons.isNotEmpty)
                             DropdownButtonFormField<int?>(
                               value: _selectedSeasonId,
@@ -777,9 +882,7 @@ String get _baseUrl => '${globalServerUri.toString()}/purchases';
                   ],
                 ),
               ),
-
               const VerticalDivider(width: 1),
-
               Expanded(
                 child: sel == null || sel.isEmpty
                     ? Center(
@@ -808,7 +911,6 @@ String get _baseUrl => '${globalServerUri.toString()}/purchases';
                               ),
                             ),
                             const SizedBox(height: 24),
-
                             Card(
                               color: Colors.blue[50],
                               child: Padding(
@@ -841,21 +943,18 @@ String get _baseUrl => '${globalServerUri.toString()}/purchases';
                                       ],
                                     ),
                                     const SizedBox(height: 8),
-Row(
-  children: [
-    const Icon(Icons.local_shipping, size: 20, color: Colors.blue),
-    const SizedBox(width: 8),
-    Text('السائق: ${sel['driver'] ?? 'غير محدد'}'),
-  ],
-),
-
+                                    Row(
+                                      children: [
+                                        const Icon(Icons.local_shipping, size: 20, color: Colors.blue),
+                                        const SizedBox(width: 8),
+                                        Text('السائق: ${sel['driver'] ?? 'غير محدد'}'),
+                                      ],
+                                    ),
                                   ],
                                 ),
                               ),
                             ),
-
                             const SizedBox(height: 16),
-
                             Card(
                               color: Colors.green[50],
                               child: Padding(
@@ -867,7 +966,7 @@ Row(
                                   final paid = paid0 + extra;
                                   final rem = (total - paid).clamp(0.0, double.infinity);
                                   final status = paid >= total ? 'مدفوع بالكامل' : paid > 0 ? 'مدفوع جزئياً' : 'غير مدفوع';
-                                  
+
                                   return Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
@@ -933,9 +1032,7 @@ Row(
                                 }),
                               ),
                             ),
-
                             const SizedBox(height: 24),
-
                             Card(
                               child: Padding(
                                 padding: const EdgeInsets.all(16),
@@ -953,9 +1050,7 @@ Row(
                                     const SizedBox(height: 16),
                                     SingleChildScrollView(
                                       scrollDirection: Axis.horizontal,
-                                      child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
+                                      child: DataTable(
                                         headingRowColor: MaterialStateProperty.all(Theme.of(context).colorScheme.primary),
                                         headingTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                                         columns: const [
@@ -976,7 +1071,6 @@ Row(
                                           ]);
                                         }).toList(),
                                       ),
-                                    ),
                                     ),
                                   ],
                                 ),
