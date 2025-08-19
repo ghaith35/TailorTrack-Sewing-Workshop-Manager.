@@ -97,42 +97,45 @@ Router getEmbroiderySalesRoutes(PostgreSQLConnection db) {
   });
 
   // ======================== FACTURES LIST ========================
-  router.get('/factures', (Request req) async {
-    try {
-      final rows = await db.query('''
-        SELECT f.id,
-               f.client_id,
-               c.full_name,
-               f.facture_date,
-               f.total_amount,
-               COALESCE(SUM(fp.amount_paid), 0) AS total_paid
-        FROM embroidery.factures f
-        JOIN embroidery.clients c ON f.client_id = c.id
-        LEFT JOIN embroidery.facture_payments fp ON f.id = fp.facture_id
-        GROUP BY f.id, c.full_name
-        ORDER BY f.id DESC
-      ''');
+ router.get('/factures', (Request req) async {
+  try {
+    final rows = await db.query('''
+      SELECT f.id,
+             f.client_id,
+             c.full_name,
+             f.facture_date,
+             f.total_amount,
+             f.amount_paid_on_creation,
+             COALESCE(SUM(fp.amount_paid), 0) AS extra_paid
+      FROM embroidery.factures f
+      JOIN embroidery.clients c ON f.client_id = c.id
+      LEFT JOIN embroidery.facture_payments fp ON f.id = fp.facture_id
+      GROUP BY f.id, c.full_name
+      ORDER BY f.id DESC
+    ''');
 
-      final list = rows.map((r) {
-        final total = _parseNum(r[4]);
-        final paid = _parseNum(r[5]);
-        return {
-          'id': _parseInt(r[0]),
-          'client_id': _parseInt(r[1]),
-          'client_name': r[2],
-          'facture_date': r[3].toString(),
-          'total_amount': total,
-          'total_paid': paid,
-          'remaining_amount': total - paid,
-        };
-      }).toList();
+    final list = rows.map((r) {
+      final total       = _parseNum(r[4]);
+      final paidOnInit  = _parseNum(r[5]);
+      final extraPaid   = _parseNum(r[6]);
+      final paid        = paidOnInit + extraPaid;
+      return {
+        'id': _parseInt(r[0]),
+        'client_id': _parseInt(r[1]),
+        'client_name': r[2],
+        'facture_date': r[3].toString(),
+        'total_amount': total,
+        'total_paid': paid,
+        'remaining_amount': total - paid,
+      };
+    }).toList();
 
-      return _okJson(list);
-    } catch (e, st) {
-      print('FACTURES LIST ERROR: $e\n$st');
-      return _errJson({'error': 'Failed to fetch factures', 'details': e.toString()});
-    }
-  });
+    return _okJson(list);
+  } catch (e, st) {
+    print('FACTURES LIST ERROR: $e\n$st');
+    return _errJson({'error': 'Failed to fetch factures', 'details': e.toString()});
+  }
+});
 
   // ======================== FACTURE DETAILS ========================
 router.get('/factures/<fid|[0-9]+>', (Request req, String fid) async {
@@ -559,85 +562,95 @@ router.delete('/factures/<fid|[0-9]+>', (Request req, String fid) async {
 });
 
   // ======================== CLIENT TRANSACTIONS (with date filter) ========================
-  router.get('/clients/<cid|[0-9]+>/transactions',
-      (Request req, String cid) async {
-    try {
-      final clientId = int.parse(cid);
-      final start = req.url.queryParameters['start_date'];
-      final end = req.url.queryParameters['end_date'];
+  router.get('/clients/<cid|[0-9]+>/transactions', (Request req, String cid) async {
+  try {
+    final clientId = int.parse(cid);
 
-      String dateFilter = '';
-      final params = <String, dynamic>{'cid': clientId};
+    final start = req.url.queryParameters['start_date'];
+    final end   = req.url.queryParameters['end_date'];
 
-      if (start != null && end != null) {
-        dateFilter =
-            'AND f.facture_date >= @start_date AND f.facture_date <= @end_date';
-        params['start_date'] = start;
-        params['end_date'] = end;
-      }
+    // Build two filters: one for factures (by facture_date)
+    // and one for payments (by payment_date)
+    final factureFilter = StringBuffer();
+    final paymentFilter = StringBuffer();
+    final params = <String, dynamic>{'cid': clientId};
 
-      final factRows = await db.query('''
-        SELECT f.id, f.facture_date, f.total_amount, f.amount_paid_on_creation,
-               COALESCE(SUM(fp.amount_paid),0) AS payments
-        FROM embroidery.factures f
-        LEFT JOIN embroidery.facture_payments fp
-          ON f.id=fp.facture_id
-        WHERE f.client_id=@cid $dateFilter
-        GROUP BY f.id
-        ORDER BY f.facture_date DESC, f.id DESC
-      ''', substitutionValues: params);
+    if (start != null && end != null) {
+      factureFilter.write(' AND f.facture_date >= @start_date AND f.facture_date <= @end_date ');
+      paymentFilter.write(' AND fp.payment_date >= @start_date AND fp.payment_date <= @end_date ');
+      params['start_date'] = start;
+      params['end_date']   = end;
+    }
 
-      final payRows = await db.query('''
-        SELECT fp.facture_id, fp.amount_paid, fp.payment_date
-        FROM embroidery.facture_payments fp
-        JOIN embroidery.factures f ON -_okJson ON f.id=fp.facture_id
-        WHERE f.client_id=@cid $dateFilter
-      ''', substitutionValues: params);
+    // 1) Facture rows (positive amounts) + on-creation payments (negative)
+    final factRows = await db.query('''
+      SELECT f.id, f.facture_date, f.total_amount, f.amount_paid_on_creation
+      FROM embroidery.factures f
+      WHERE f.client_id=@cid ${factureFilter.toString()}
+      ORDER BY f.facture_date DESC, f.id DESC
+    ''', substitutionValues: params);
 
-      final rows = <Map<String, dynamic>>[];
+    // 2) Extra payments (negative amounts)
+    final payRows = await db.query('''
+      SELECT fp.facture_id, fp.amount_paid, fp.payment_date
+      FROM embroidery.facture_payments fp
+      JOIN embroidery.factures f ON f.id = fp.facture_id
+      WHERE f.client_id=@cid ${paymentFilter.toString()}
+      ORDER BY fp.payment_date ASC, fp.id ASC
+    ''', substitutionValues: params);
 
-      for (final f in factRows) {
-        rows.add({
-          'date': f[1].toString(),
-          'type': 'facture',
-          'facture_id': f[0],
-          'label': 'فاتورة',
-          'amount': _parseNum(f[2]),
-        });
-        final onCreate = _parseNum(f[3]);
-        if (onCreate > 0) {
-          rows.add({
-            'date': f[1].toString(),
-            'type': 'pay_on_creation',
-            'facture_id': f[0],
-            'label': 'دفعة عند الإنشاء',
-            'amount': -onCreate,
-          });
-        }
-      }
-      for (final p in payRows) {
-        rows.add({
-          'date': p[2].toString(),
-          'type': 'payment',
-          'facture_id': p[0],
-          'label': 'دفعة',
-          'amount': -_parseNum(p[1]),
-        });
-      }
+    final rows = <Map<String, dynamic>>[];
 
-      rows.sort((a, b) {
-        final d1 = DateTime.parse(a['date']);
-        final d2 = DateTime.parse(b['date']);
-        return d1.compareTo(d2);
+    // Invoices (positive) and on-creation payment (negative)
+    for (final f in factRows) {
+      final fid  = _parseInt(f[0]);
+      final fdt  = f[1].toString();
+      final tot  = _parseNum(f[2]);
+      final aoc  = _parseNum(f[3]);
+
+      rows.add({
+        'date': fdt,
+        'type': 'facture',
+        'facture_id': fid,
+        'label': 'فاتورة',
+        'amount': tot, // positive
       });
 
-      return _okJson(rows);
-    } catch (e, st) {
-      print('TRANSACTIONS ERROR: $e\n$st');
-      return _errJson(
-          {'error': 'Failed to fetch transactions', 'details': e.toString()});
+      if (aoc > 0) {
+        rows.add({
+          'date': fdt,
+          'type': 'pay_on_creation',
+          'facture_id': fid,
+          'label': 'دفعة عند الإنشاء',
+          'amount': -aoc, // negative
+        });
+      }
     }
-  });
+
+    // Extra payments (negative)
+    for (final p in payRows) {
+      rows.add({
+        'date': p[2].toString(),
+        'type': 'payment',
+        'facture_id': _parseInt(p[0]),
+        'label': 'دفعة',
+        'amount': -_parseNum(p[1]),
+      });
+    }
+
+    // Oldest first
+    rows.sort((a, b) {
+      final d1 = DateTime.parse(a['date']);
+      final d2 = DateTime.parse(b['date']);
+      return d1.compareTo(d2);
+    });
+
+    return _okJson(rows);
+  } catch (e, st) {
+    print('TRANSACTIONS ERROR: $e\n$st');
+    return _errJson({'error': 'Failed to fetch transactions', 'details': e.toString()});
+  }
+});
 
   // ======================== MODEL BUYERS ========================
   router.get('/models/<mid|[0-9]+>/clients', (Request req, String mid) async {

@@ -6,8 +6,13 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../main.dart';
 
+// >>> Added to match Sewing's print/export capabilities
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
+import 'dart:io' as io;
+
 /// ===================== CONFIG =====================
- String get kBaseUrl => '${globalServerUri.toString()}/embrodry/sales';
+String get kBaseUrl => '${globalServerUri.toString()}/embrodry/sales';
 
 /// ===================== HELPERS =====================
 void showSnack(BuildContext ctx, String msg, {Color? color}) {
@@ -487,7 +492,7 @@ class _EmbroiderySalesSectionState extends State<EmbroiderySalesSection> {
                         'image_url': prod['image_url'],
                       });
                     }
-                    setOuter(() {});
+                    setState(() {}); // refresh parent dialog state
                     Navigator.pop(ctx2);
                   },
                   child: const Text('إضافة'),
@@ -1002,6 +1007,7 @@ class _EmbroiderySalesSectionState extends State<EmbroiderySalesSection> {
                     ],
                   ),
                 )
+              // >>> Replaced with the new (Sewing-like) implementation
               : ClientDetailsTabs(clientId: selectedClientId!, seasonId: seasonId),
         )
       ]);
@@ -1057,182 +1063,427 @@ class _FactureDetailView extends StatelessWidget {
   }
 
   Future<void> _printFacture(Map<String, dynamic> facture) async {
-    final pdf = pw.Document();
-    final font = await PdfGoogleFonts.cairoRegular();
+  // ========= Fonts =========
+  final arabicData = await rootBundle.load('assets/fonts/NotoSansArabic_Condensed-Black.ttf');
+  final latinData  = await rootBundle.load('assets/fonts/Roboto_Condensed-Black.ttf');
+  final arabicFont = pw.Font.ttf(arabicData);
+  final latinFont  = pw.Font.ttf(latinData);
 
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        build: (pw.Context ctx) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Text(
-              'فاتورة رقم ${facture['id']}',
-              style: pw.TextStyle(
-                font: font,
-                fontSize: 24,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-            pw.SizedBox(height: 20),
-            pw.Text(
-              'التاريخ: ${fmtDate(facture['facture_date'])}',
-              style: pw.TextStyle(font: font, fontSize: 16),
-            ),
-            pw.Text(
-              'العميل: ${facture['client_name']}',
-              style: pw.TextStyle(font: font, fontSize: 16),
-            ),
-            pw.Text(
-              'الهاتف: ${facture['client_phone']}',
-              style: pw.TextStyle(font: font, fontSize: 16),
-            ),
-            pw.Text(
-              'العنوان: ${facture['client_address']}',
-              style: pw.TextStyle(font: font, fontSize: 16),
-            ),
-            pw.SizedBox(height: 20),
-            pw.Text(
-              'تفاصيل المنتجات',
-              style: pw.TextStyle(
-                font: font,
-                fontSize: 18,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-            pw.SizedBox(height: 10),
-            pw.Table(
-              border: pw.TableBorder.all(),
-              children: [
-                pw.TableRow(
-                  children: [
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(8),
-                      child: pw.Text('المنتج', style: pw.TextStyle(font: font)),
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(8),
-                      child: pw.Text('الكمية', style: pw.TextStyle(font: font)),
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(8),
-                      child: pw.Text('سعر الوحدة', style: pw.TextStyle(font: font)),
-                    ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.all(8),
-                      child: pw.Text('الإجمالي', style: pw.TextStyle(font: font)),
-                    ),
-                  ],
-                ),
-                ...(facture['items'] as List).map((it) {
-                  return pw.TableRow(
-                    children: [
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text(it['model_name'] ?? '', style: pw.TextStyle(font: font)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('${it['quantity'] ?? 0}', style: pw.TextStyle(font: font)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('${parseNum(it['unit_price']).toStringAsFixed(2)} دج',
-                            style: pw.TextStyle(font: font)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('${parseNum(it['line_total']).toStringAsFixed(2)} دج',
-                            style: pw.TextStyle(font: font)),
-                      ),
-                    ],
-                  );
-                }).toList(),
-              ],
-            ),
-            pw.SizedBox(height: 20),
-            pw.Text(
-              'الإجمالي: ${parseNum(facture['total_amount']).toStringAsFixed(2)} دج',
-              style: pw.TextStyle(
-                font: font,
-                fontSize: 16,
-                fontWeight: pw.FontWeight.bold,
-              ),
-            ),
-            pw.Text(
-              'المدفوع: ${parseNum(facture['total_paid']).toStringAsFixed(2)} دج',
-              style: pw.TextStyle(font: font, fontSize: 16),
-            ),
-            pw.Text(
-              'المتبقي: ${parseNum(facture['remaining_amount']).toStringAsFixed(2)} دج',
-              style: pw.TextStyle(font: font, fontSize: 16),
-            ),
-            if (facture['returns'] != null && (facture['returns'] as List).isNotEmpty) ...[
-              pw.SizedBox(height: 20),
-              pw.Text(
-                'المرتجعات',
-                style: pw.TextStyle(
-                  font: font,
-                  fontSize: 18,
-                  fontWeight: pw.FontWeight.bold,
-                ),
-              ),
-              pw.SizedBox(height: 10),
-              pw.Table(
-                border: pw.TableBorder.all(),
-                children: [
-                  pw.TableRow(
-                    children: [
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('المنتج', style: pw.TextStyle(font: font)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('الكمية', style: pw.TextStyle(font: font)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('تاريخ الإرجاع', style: pw.TextStyle(font: font)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('ملاحظات', style: pw.TextStyle(font: font)),
-                      ),
-                    ],
-                  ),
-                  ...(facture['returns'] as List).map((r) {
-                    return pw.TableRow(
-                      children: [
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(r['model_name'] ?? '', style: pw.TextStyle(font: font)),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text('${r['quantity'] ?? 0}', style: pw.TextStyle(font: font)),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(fmtDate(r['return_date']), style: pw.TextStyle(font: font)),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(r['notes'] ?? '', style: pw.TextStyle(font: font)),
-                        ),
-                      ],
-                    );
-                  }).toList(),
-                ],
-              ),
-            ],
-          ],
-        ),
+  // ========= Helpers =========
+  String _s(dynamic v) => v == null ? '' : v.toString();
+
+  num _num(dynamic v) {
+    if (v == null) return 0;
+    if (v is num) return v;
+    if (v is String) return num.tryParse(v) ?? 0;
+    return 0;
+  }
+
+  // Western digits: 0 decimals if integer, else 2 decimals (like Sewing)
+  String _dz(num v) {
+    final hasFraction = (v % 1) != 0;
+    final s = hasFraction ? v.toStringAsFixed(2) : v.toStringAsFixed(0);
+    return '$s دج';
+  }
+
+  List<List<T>> _chunk<T>(List<T> list, int size) {
+    if (list.isEmpty) return const [];
+    final out = <List<T>>[];
+    for (var i = 0; i < list.length; i += size) {
+      out.add(list.sublist(i, i + size > list.length ? list.length : i + size));
+    }
+    return out;
+  }
+
+  // Arabic amount-in-words, same as Sewing
+  String _intToArabicWords(int n) {
+    if (n == 0) return 'صفر';
+    if (n < 0) return 'سالب ${_intToArabicWords(-n)}';
+
+    const units = [
+      'صفر','واحد','اثنان','ثلاثة','أربعة','خمسة','ستة','سبعة','ثمانية','تسعة',
+      'عشرة','أحد عشر','اثنا عشر','ثلاثة عشر','أربعة عشر','خمسة عشر','ستة عشر',
+      'سبعة عشر','ثمانية عشر','تسعة عشر'
+    ];
+    const tensMap = {20:'عشرون',30:'ثلاثون',40:'أربعون',50:'خمسون',60:'ستون',70:'سبعون',80:'ثمانون',90:'تسعون'};
+    const hundredsMap = {
+      1:'مائة',2:'مائتان',3:'ثلاثمائة',4:'أربعمائة',5:'خمسمائة',
+      6:'ستمائة',7:'سبعمائة',8:'ثمانمائة',9:'تسعمائة'
+    };
+
+    String below100(int x) {
+      if (x < 20) return units[x];
+      final t = (x ~/ 10) * 10;
+      final r = x % 10;
+      if (r == 0) return tensMap[t]!;
+      return '${units[r]} و ${tensMap[t]}';
+    }
+
+    String below1000(int x) {
+      final h = x ~/ 100;
+      final r = x % 100;
+      String res = '';
+      if (h > 0) res = hundredsMap[h]!;
+      if (r > 0) {
+        if (res.isNotEmpty) res += ' و ';
+        res += below100(r);
+      }
+      return res.isNotEmpty ? res : 'صفر';
+    }
+
+    final millions = n ~/ 1000000;
+    final thousands = (n % 1000000) ~/ 1000;
+    final rest = n % 1000;
+
+    final parts = <String>[];
+    if (millions > 0) {
+      if (millions == 1) parts.add('مليون');
+      else if (millions == 2) parts.add('مليونان');
+      else if (millions <= 10) parts.add('${below1000(millions)} ملايين');
+      else parts.add('${below1000(millions)} مليون');
+    }
+    if (thousands > 0) {
+      if (thousands == 1) parts.add('ألف');
+      else if (thousands == 2) parts.add('ألفان');
+      else if (thousands <= 10) parts.add('${below1000(thousands)} آلاف');
+      else parts.add('${below1000(thousands)} ألف');
+    }
+    if (rest > 0) parts.add(below1000(rest));
+    return parts.join(' و ');
+  }
+
+  String _currencyForm(int n, String singular, String dual, String plural) {
+    if (n == 1) return singular;
+    if (n == 2) return dual;
+    return plural;
+  }
+
+  String _toArabicAmountWords(num amount) {
+    final dinars = amount.floor();
+    final cents  = ((amount - dinars) * 100).round();
+
+    final wordsDinars = _intToArabicWords(dinars);
+    final formDinars  = _currencyForm(dinars, 'دينار جزائري', 'ديناران جزائريان', 'دنانير جزائرية');
+
+    String res = '$wordsDinars $formDinars';
+    if (cents > 0) {
+      final wordsCents = _intToArabicWords(cents);
+      final formCents  = _currencyForm(cents, 'سنتيم', 'سنتيمان', 'سنتيمات');
+      res += ' و $wordsCents $formCents';
+    }
+    return res;
+  }
+
+  pw.Widget _kvRowAr(pw.Font ar, pw.Font lat, String key, String value) {
+    return pw.Container(
+      padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      decoration: const pw.BoxDecoration(
+        border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey700, width: 0.6)),
+      ),
+      child: pw.Row(
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+        children: [
+          pw.Text(key,   style: pw.TextStyle(font: ar, fontSize: 11, fontFallback: [lat])),
+          pw.Text(value, style: pw.TextStyle(font: ar, fontSize: 11, fontFallback: [lat])),
+        ],
       ),
     );
-
-    await Printing.layoutPdf(onLayout: (format) async => pdf.save());
   }
+
+  // ========= Facture data =========
+  final items      = (facture['items'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
+  final total      = _num(facture['total_amount']);     // invoice total
+  final totalPaid  = _num(facture['total_paid']);       // paid on this invoice
+  final remaining  = _num(facture['remaining_amount']); // remaining on this invoice
+
+  final clientName    = _s(facture['client_name']);
+  final clientAddress = _s(facture['client_address']);
+  final clientPhone   = _s(facture['client_phone']);
+  final fDateStr      = facture['facture_date']?.toString();
+
+  // ========= clientId (Embroidery) =========
+  int? clientId;
+  try {
+    clientId = (facture['client_id'] as num?)?.toInt();
+  } catch (_) {
+    clientId = null;
+  }
+
+  // ========= Global remaining (for the client) =========
+  num globalRemaining = remaining; // fallback
+  try {
+    if (clientId != null) {
+      final resp = await http.get(
+        Uri.parse('${globalServerUri.toString()}/embrodry/sales/clients/$clientId/account'),
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final summary = (data['summary'] as Map?) ?? {};
+        globalRemaining = _num(summary['remaining']);
+      }
+    }
+  } catch (_) {/* keep fallback */}
+
+  final oldDebtNow  = (globalRemaining - remaining) > 0 ? (globalRemaining - remaining) : 0;
+  final grandTotal  = oldDebtNow + total;
+  final totalWords  = _toArabicAmountWords(total);
+
+  // ========= Styles =========
+  final headerTitle   = pw.TextStyle(font: arabicFont, fontSize: 18, fontWeight: pw.FontWeight.bold, fontFallback: [latinFont]);
+  final headerBrand   = pw.TextStyle(font: arabicFont, fontSize: 16, fontWeight: pw.FontWeight.bold, fontFallback: [latinFont]);
+  final headerAddr    = pw.TextStyle(font: arabicFont, fontSize: 10, fontFallback: [latinFont]);
+  final h1            = pw.TextStyle(font: arabicFont, fontSize: 16, fontWeight: pw.FontWeight.bold, fontFallback: [latinFont]);
+  final label         = pw.TextStyle(font: arabicFont, fontSize: 11, fontFallback: [latinFont]);
+  final labelB        = pw.TextStyle(font: arabicFont, fontSize: 11, fontWeight: pw.FontWeight.bold, fontFallback: [latinFont]);
+  final thStyle       = pw.TextStyle(font: arabicFont, fontSize: 11, fontWeight: pw.FontWeight.bold, fontFallback: [latinFont]);
+  final tdStyle       = pw.TextStyle(font: arabicFont, fontSize: 10, fontFallback: [latinFont]);
+
+  final pdf = pw.Document();
+
+  pdf.addPage(
+    pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      margin: pw.EdgeInsets.zero,   // edge-to-edge header (same as Sewing)
+      build: (ctx) {
+        final body = <pw.Widget>[];
+
+        // ======= Company header (RTL, full width) =======
+        body.add(
+          pw.Container(
+            width: double.infinity,
+            padding: const pw.EdgeInsets.fromLTRB(16, 14, 16, 10),
+            decoration: const pw.BoxDecoration(
+              border: pw.Border(bottom: pw.BorderSide(color: PdfColors.black, width: 1)),
+            ),
+            child: pw.Directionality(
+              textDirection: pw.TextDirection.rtl,
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.center,
+                children: [
+                  pw.Text('الإنتاج الصناعي للملابس', style: headerTitle),
+                  pw.SizedBox(height: 2),
+                  pw.Text('HALA MOD', style: headerBrand),
+                  pw.SizedBox(height: 4),
+                  pw.Text('العنوان: LOCAL N°03 SEC 05 GRP N°21 OULED MOUSSA BOUMERDES', style: headerAddr),
+                ],
+              ),
+            ),
+          ),
+        );
+
+        // ======= Content =======
+        body.add(
+          pw.Padding(
+            padding: const pw.EdgeInsets.fromLTRB(24, 10, 24, 24),
+            child: pw.Directionality(
+              textDirection: pw.TextDirection.rtl,
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                children: [
+                  // Invoice id & date (date via fmtDate to drop 00:00:00.000Z)
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text('فاتورة رقم ${_s(facture['id'])}', style: h1),
+                      pw.Text('التاريخ: ${fDateStr == null ? '' : fmtDate(fDateStr)}', style: labelB),
+                    ],
+                  ),
+                  pw.SizedBox(height: 8),
+
+                  // Client card
+                  pw.Container(
+                    decoration: pw.BoxDecoration(
+                      border: pw.Border.all(color: PdfColors.grey700, width: 0.8),
+                    ),
+                    child: pw.Column(
+                      children: [
+                        pw.Row(
+                          children: [
+                            pw.Expanded(
+                              flex: 2,
+                              child: pw.Container(
+                                padding: const pw.EdgeInsets.all(8),
+                                decoration: pw.BoxDecoration(
+                                  border: pw.Border(
+                                    left: pw.BorderSide(color: PdfColors.grey700, width: 0.8),
+                                  ),
+                                ),
+                                child: pw.Column(
+                                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                                  children: [
+                                    pw.Text('العميل', style: labelB),
+                                    pw.SizedBox(height: 2),
+                                    pw.Text(clientName, style: label),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            pw.Expanded(
+                              child: pw.Container(
+                                padding: const pw.EdgeInsets.all(8),
+                                child: pw.Column(
+                                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                                  children: [
+                                    pw.Text('الهاتف', style: labelB),
+                                    pw.SizedBox(height: 2),
+                                    pw.Text(clientPhone, style: label),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        pw.Container(height: 0.8, color: PdfColors.grey700),
+                        pw.Container(
+                          padding: const pw.EdgeInsets.all(8),
+                          child: pw.Column(
+                            crossAxisAlignment: pw.CrossAxisAlignment.start,
+                            children: [
+                              pw.Text('العنوان', style: labelB),
+                              pw.SizedBox(height: 2),
+                              pw.Text(clientAddress, style: label),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  pw.SizedBox(height: 12),
+
+                  // ===== Items table (identical to Sewing): amount | unit | qty | product (RTL, right-aligned)
+                  () {
+                    final headers = ['المبلغ', 'سعر الوحدة', 'الكمية', 'المنتج'];
+                    final rows = items.map((it) {
+                      final q  = _num(it['quantity']);
+                      final pu = _num(it['unit_price']);
+                      final mt = _num(it['line_total']) == 0 ? q * pu : _num(it['line_total']);
+                      return [
+                        _dz(mt),
+                        _dz(pu),
+                        q % 1 == 0 ? q.toInt().toString() : q.toString(),
+                        _s(it['model_name'] ?? ''),
+                      ];
+                    }).toList();
+
+                    const rowsPerChunk = 35;
+                    final chunks = _chunk(rows, rowsPerChunk);
+                    final widgets = <pw.Widget>[];
+
+                    if (chunks.isEmpty) {
+                      widgets.add(
+                        pw.Table.fromTextArray(
+                          context: ctx,
+                          headers: headers,
+                          data: const <List<String>>[],
+                          headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
+                          border: pw.TableBorder.all(color: PdfColors.grey700, width: 0.6),
+                          headerStyle: thStyle,
+                          cellStyle: tdStyle,
+                          columnWidths: const {
+                            0: pw.FlexColumnWidth(3), // amount
+                            1: pw.FlexColumnWidth(3), // unit
+                            2: pw.FlexColumnWidth(2), // qty
+                            3: pw.FlexColumnWidth(6), // product
+                          },
+                          cellAlignments: const {
+                            0: pw.Alignment.centerRight,
+                            1: pw.Alignment.centerRight,
+                            2: pw.Alignment.centerRight,
+                            3: pw.Alignment.centerRight,
+                          },
+                        ),
+                      );
+                    } else {
+                      for (var i = 0; i < chunks.length; i++) {
+                        widgets.add(
+                          pw.Table.fromTextArray(
+                            context: ctx,
+                            headers: headers,
+                            data: chunks[i],
+                            tableWidth: pw.TableWidth.max,
+                            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
+                            border: pw.TableBorder.all(color: PdfColors.grey700, width: 0.6),
+                            headerStyle: thStyle,
+                            cellStyle: tdStyle,
+                            columnWidths: const {
+                              0: pw.FlexColumnWidth(3),
+                              1: pw.FlexColumnWidth(3),
+                              2: pw.FlexColumnWidth(2),
+                              3: pw.FlexColumnWidth(6),
+                            },
+                            cellAlignments: const {
+                              0: pw.Alignment.centerRight,
+                              1: pw.Alignment.centerRight,
+                              2: pw.Alignment.centerRight,
+                              3: pw.Alignment.centerRight,
+                            },
+                          ),
+                        );
+                        if (i != chunks.length - 1) widgets.add(pw.SizedBox(height: 6));
+                      }
+                    }
+                    return pw.Column(children: widgets);
+                  }(),
+
+                  pw.SizedBox(height: 10),
+
+                  // ===== Totals (5 lines)
+                  pw.Align(
+                    alignment: pw.Alignment.centerRight,
+                    child: pw.Container(
+                      width: 320,
+                      decoration: pw.BoxDecoration(
+                        border: pw.Border.all(color: PdfColors.grey700, width: 0.6),
+                      ),
+                      child: pw.Column(
+                        mainAxisSize: pw.MainAxisSize.min,
+                        children: [
+                          _kvRowAr(arabicFont, latinFont, 'إجمالي الفاتورة', _dz(total)),
+                          _kvRowAr(arabicFont, latinFont, 'الإجمالي',           _dz(grandTotal)),
+                          _kvRowAr(arabicFont, latinFont, 'المدفوع',            _dz(totalPaid)),
+                          _kvRowAr(arabicFont, latinFont, 'المتبقي',            _dz(remaining)),
+                          _kvRowAr(arabicFont, latinFont, 'المتبقي الإجمالي',   _dz(globalRemaining)),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  pw.SizedBox(height: 10),
+
+                  // ===== Amount in words
+                  pw.Container(
+                    width: double.infinity,
+                    padding: const pw.EdgeInsets.all(10),
+                    decoration: pw.BoxDecoration(
+                      border: pw.Border.all(color: PdfColors.grey700, width: 0.6),
+                      color: PdfColors.grey200,
+                    ),
+                    child: pw.Text(
+                      'هذه الفاتورة مقفلة على مبلغ: $totalWords (${_dz(total)}).',
+                      style: label,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+
+        return body;
+      },
+    ),
+  );
+
+  // ========= Save =========
+  final bytes = await pdf.save();
+  final dir = await FilePicker.platform.getDirectoryPath(dialogTitle: 'اختر مجلد الحفظ');
+  if (dir != null) {
+    final path = '$dir/فاتورة_${_s(facture['id'])}.pdf';
+    await io.File(path).writeAsBytes(bytes);
+  }
+}
+
 
   @override
   Widget build(BuildContext context) {
@@ -1700,7 +1951,7 @@ class _ModelBuyersPanelState extends State<ModelBuyersPanel> {
                             final mtype = s['model_type'] ?? '';
                             final stitches = parseInt(s['stitch_number']);
                             return DataRow(cells: [
-                              DataCell(Text(s['client_name'] ?? '')),
+                              DataCell(Text(s['model_name'] ?? '')),
                               DataCell(Text(mtype.toString())),
                               DataCell(Text(snum.toString())),
                               DataCell(Text('${price.toStringAsFixed(2)} دج')),
@@ -1725,7 +1976,7 @@ class _ModelBuyersPanelState extends State<ModelBuyersPanel> {
   }
 }
 
-/// ===================== CLIENT DETAILS TABS =====================
+/// ===================== CLIENT DETAILS TABS (Sewing-like) =====================
 class ClientDetailsTabs extends StatefulWidget {
   final int clientId;
   final int? seasonId;
@@ -1736,13 +1987,13 @@ class ClientDetailsTabs extends StatefulWidget {
 }
 
 class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
-  int tab = 0; // 0=factures, 1=transactions
+  int selected = 0; // 0 = factures, 1 = transactions
   List<dynamic> factures = [];
   List<dynamic> transactions = [];
-  Set<int> expandedIds = {};
+  Set<int> expandedFactureIds = {};
 
   bool loadingFactures = false;
-  bool loadingTx = false;
+  bool loadingTransactions = false;
 
   DateTime? startDate;
   DateTime? endDate;
@@ -1753,37 +2004,39 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
   @override
   void initState() {
     super.initState();
-    _loadFactures();
-    _loadTransactions();
+    _fetchFactures();
+    _fetchTransactions();
   }
 
   @override
   void didUpdateWidget(ClientDetailsTabs oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.clientId != widget.clientId) {
-      _loadFactures();
-      _loadTransactions();
-      expandedIds.clear();
+    if (oldWidget.clientId != widget.clientId ||
+        oldWidget.seasonId != widget.seasonId) {
+      expandedFactureIds.clear();
+      _fetchFactures();
+      _fetchTransactions();
     }
   }
 
-  Future<void> _loadFactures() async {
+  Future<void> _fetchFactures() async {
     setState(() {
       loadingFactures = true;
       factures = [];
     });
     try {
-      final r =
-          await http.get(Uri.parse('$kBaseUrl/clients/${widget.clientId}/factures'));
-      if (r.statusCode == 200) factures = jsonDecode(r.body);
+      final r = await http.get(Uri.parse('$kBaseUrl/clients/${widget.clientId}/factures'));
+      if (r.statusCode == 200) {
+        factures = jsonDecode(r.body) as List;
+      }
     } finally {
       setState(() => loadingFactures = false);
     }
   }
 
-  Future<void> _loadTransactions() async {
+  Future<void> _fetchTransactions() async {
     setState(() {
-      loadingTx = true;
+      loadingTransactions = true;
       transactions = [];
     });
     try {
@@ -1794,9 +2047,9 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
         url += '?start_date=$s&end_date=$e';
       }
       final r = await http.get(Uri.parse(url));
-      if (r.statusCode == 200) transactions = jsonDecode(r.body);
+      if (r.statusCode == 200) transactions = jsonDecode(r.body) as List;
     } finally {
-      setState(() => loadingTx = false);
+      setState(() => loadingTransactions = false);
     }
   }
 
@@ -1810,56 +2063,127 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
           : null,
     );
     if (picked != null) {
-      startDate = picked.start;
-      endDate = picked.end;
-      _loadTransactions();
+      setState(() {
+        startDate = picked.start;
+        endDate = picked.end;
+      });
+      _fetchTransactions();
     }
   }
 
-  Future<void> _printTx() async {
+  Future<void> _printTransactions() async {
     if (transactions.isEmpty) return;
+
     final pdf = pw.Document();
-    final font = await PdfGoogleFonts.notoSansArabicRegular();
-    pdf.addPage(pw.Page(
-      textDirection: pw.TextDirection.rtl,
-      build: (ctx) => pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Text('كشف حساب العميل',
-              style: pw.TextStyle(
-                  fontSize: 20, fontWeight: pw.FontWeight.bold, font: font)),
-          if (startDate != null && endDate != null)
-            pw.Text(
-                'من ${fmtDate(startDate!.toIso8601String())} إلى ${fmtDate(endDate!.toIso8601String())}',
-                style: pw.TextStyle(font: font)),
-          pw.SizedBox(height: 16),
-          pw.Table.fromTextArray(
-            context: ctx,
-            headers: ['التاريخ', 'نوع', 'فاتورة', 'المبلغ'],
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, font: font),
-            cellStyle: pw.TextStyle(font: font),
-            data: transactions.map((t) {
-              return [
-                fmtDate(t['date']),
-                t['label'],
-                t['facture_id']?.toString() ?? '-',
-                '${t['amount']} دج'
-              ];
-            }).toList(),
+
+    // Load fonts from assets (same as Sewing)
+    final arabicData =
+        await rootBundle.load('assets/fonts/NotoSansArabic_Condensed-Black.ttf');
+    final latinData =
+        await rootBundle.load('assets/fonts/Roboto_Condensed-Black.ttf');
+    final arabicFont = pw.Font.ttf(arabicData);
+    final latinFont = pw.Font.ttf(latinData);
+
+    // Find client name
+    String clientName = 'عميل غير معروف';
+    try {
+      final resp = await http.get(Uri.parse('$kBaseUrl/clients'));
+      if (resp.statusCode == 200) {
+        final list = jsonDecode(resp.body) as List;
+        final found = list.cast<Map>().firstWhere(
+          (c) => c['id'] == widget.clientId,
+          orElse: () => {},
+        );
+        if (found.isNotEmpty) clientName = (found['full_name'] ?? '').toString();
+      }
+    } catch (_) {}
+
+    final headers = ['التاريخ', 'نوع العملية', 'رقم الفاتورة', 'المبلغ'];
+    final dataRows = transactions.map<List<String>>((tx) {
+      final amt = parseNum(tx['amount']);
+      return [
+        fmtDate(tx['date']?.toString()),
+        tx['label']?.toString() ?? '',
+        tx['facture_id']?.toString() ?? '-',
+        '${amt.toStringAsFixed(2)} دج',
+      ];
+    }).toList();
+
+    pdf.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4.landscape,
+        build: (ctx) => [
+          pw.Directionality(
+            textDirection: pw.TextDirection.rtl,
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Text(
+                  'كشف حساب العميل: $clientName',
+                  style: pw.TextStyle(
+                    font: arabicFont,
+                    fontSize: 20,
+                    fontWeight: pw.FontWeight.bold,
+                    fontFallback: [latinFont],
+                  ),
+                ),
+                pw.SizedBox(height: 4),
+                if (startDate != null && endDate != null)
+                  pw.Text(
+                    'من ${fmtDate(startDate!.toIso8601String())} إلى ${fmtDate(endDate!.toIso8601String())}',
+                    style: pw.TextStyle(font: arabicFont, fontFallback: [latinFont]),
+                  ),
+                pw.SizedBox(height: 12),
+                pw.Table.fromTextArray(
+                  headers: headers,
+                  data: dataRows,
+                  headerStyle: pw.TextStyle(
+                    font: arabicFont,
+                    fontWeight: pw.FontWeight.bold,
+                    fontSize: 14,
+                    fontFallback: [latinFont],
+                  ),
+                  cellStyle: pw.TextStyle(
+                    font: arabicFont,
+                    fontSize: 12,
+                    fontFallback: [latinFont],
+                  ),
+                  headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
+                  border: pw.TableBorder.all(width: 0.5),
+                  cellAlignment: pw.Alignment.centerRight,
+                ),
+              ],
+            ),
           ),
         ],
       ),
-    ));
-    await Printing.layoutPdf(onLayout: (f) async => pdf.save());
+    );
+
+    final bytes = await pdf.save();
+    final String? dir = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'اختر مجلد الحفظ',
+    );
+    if (dir != null) {
+      final ts = DateTime.now();
+      final stamp =
+          '${ts.year}-${ts.month.toString().padLeft(2, '0')}-${ts.day.toString().padLeft(2, '0')}_${ts.hour.toString().padLeft(2, '0')}-${ts.minute.toString().padLeft(2, '0')}';
+      final filePath = '$dir/كشف_حساب_${widget.clientId}_$stamp.pdf';
+      await io.File(filePath).writeAsBytes(bytes);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تم حفظ الملف في $filePath'), backgroundColor: Colors.green),
+        );
+      }
+    }
   }
 
   Widget _chip(String lbl, int idx) => ChoiceChip(
         label: Text(lbl),
-        selected: tab == idx,
+        selected: selected == idx,
         selectedColor: Theme.of(context).colorScheme.primary,
         labelStyle: TextStyle(
-            color: tab == idx ? Colors.white : null, fontWeight: FontWeight.bold),
-        onSelected: (_) => setState(() => tab = idx),
+            color: selected == idx ? Colors.white : null, fontWeight: FontWeight.bold),
+        onSelected: (_) => setState(() => selected = idx),
       );
 
   @override
@@ -1875,7 +2199,7 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
             _chip('المعاملات', 1),
           ]),
         ),
-        Expanded(child: tab == 0 ? _facturesTab() : _accountTab()),
+        Expanded(child: selected == 0 ? _facturesTab() : _transactionsTab()),
       ],
     );
   }
@@ -1900,7 +2224,7 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: factures.map((f) {
-          final expanded = expandedIds.contains(f['id']);
+          final expanded = expandedFactureIds.contains(f['id']);
           return Card(
             margin: const EdgeInsets.symmetric(vertical: 8),
             elevation: 2,
@@ -1946,8 +2270,8 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
                         color: expanded ? Colors.blue : Colors.grey),
                     onTap: () {
                       setState(() {
-                        if (expanded) expandedIds.remove(f['id']);
-                        else expandedIds.add(f['id']);
+                        if (expanded) expandedFactureIds.remove(f['id']);
+                        else expandedFactureIds.add(f['id']);
                       });
                     },
                   ),
@@ -2045,7 +2369,7 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
     );
   }
 
-  Widget _accountTab() {
+  Widget _transactionsTab() {
     return Column(
       children: [
         Padding(
@@ -2068,29 +2392,29 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
                     startDate = null;
                     endDate = null;
                   });
-                  _loadTransactions();
+                  _fetchTransactions();
                 },
                 child: const Text('إزالة التصفية'),
               ),
           ]),
         ),
-        if (!loadingTx && transactions.isNotEmpty)
+        if (!loadingTransactions && transactions.isNotEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.print, color: Colors.white),
-                label: const Text('طباعة', style: TextStyle(color: Colors.white)),
+                label: const Text('طباعة المعاملات', style: TextStyle(color: Colors.white)),
                 style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green[600],
                     padding: const EdgeInsets.symmetric(vertical: 12)),
-                onPressed: _printTx,
+                onPressed: _printTransactions,
               ),
             ),
           ),
         Expanded(
-          child: loadingTx
+          child: loadingTransactions
               ? const Center(child: CircularProgressIndicator())
               : transactions.isEmpty
                   ? Center(
@@ -2136,8 +2460,8 @@ class _ClientDetailsTabsState extends State<ClientDetailsTabs> {
                                   rows: transactions.map<DataRow>((e) {
                                     final amt = parseNum(e['amount']);
                                     return DataRow(cells: [
-                                      DataCell(Text(fmtDate(e['date'].toString()))),
-                                      DataCell(Text(e['label'].toString())),
+                                      DataCell(Text(fmtDate(e['date']?.toString()))),
+                                      DataCell(Text(e['label']?.toString() ?? '')),
                                       DataCell(Text(e['facture_id']?.toString() ?? '-')),
                                       DataCell(Text(
                                         '${amt.toStringAsFixed(2)} دج',

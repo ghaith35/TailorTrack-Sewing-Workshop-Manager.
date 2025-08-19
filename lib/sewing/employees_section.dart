@@ -954,66 +954,113 @@ final pieceEmpRes = await http.get(
   bool hasActiveLoan = false;
   DateTime? nextAvailable;
 
-  // On initial open, if creating new loan, check block status:
-  if (employeeId != null && initial == null) {
-    final checkRes = await http.get(
-      Uri.parse('${globalServerUri.toString()}/employees/loans/check/$employeeId')
-    );
-    if (checkRes.statusCode == 200) {
-      final data = jsonDecode(checkRes.body);
-      hasActiveLoan = data['has_active_loan'] as bool? ?? false;
-      if (data['next_available_date'] != null) {
-        nextAvailable = DateTime.parse(data['next_available_date']);
-      }
+  String _norm(String s) {
+    // lower + remove Arabic diacritics & tatweel + collapse spaces
+    return s.toLowerCase()
+        .replaceAll(RegExp(r'[\u064B-\u0652\u0640]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  Iterable<Map<String, dynamic>> _searchEmployeesSync(String q) {
+    final base = allEmployees.cast<Map<String, dynamic>>();
+    if (q.isEmpty) return base.take(30);
+
+    final nq = _norm(q);
+    int score(Map<String, dynamic> e) {
+      final name  = _norm('${e['first_name'] ?? ''} ${e['last_name'] ?? ''}');
+      final phone = _norm('${e['phone'] ?? ''}');
+      final role  = _norm('${e['role'] ?? ''}');
+
+      if (name.startsWith(nq))  return 0;
+      if (phone.startsWith(nq)) return 1;
+      if (name.contains(nq))    return 2;
+      if (phone.contains(nq))   return 3;
+      if (role.contains(nq))    return 4;
+      return 5;
     }
+
+    final list = base
+        .where((e) {
+          final name  = _norm('${e['first_name'] ?? ''} ${e['last_name'] ?? ''}');
+          final phone = _norm('${e['phone'] ?? ''}');
+          final role  = _norm('${e['role'] ?? ''}');
+          return name.contains(nq) || phone.contains(nq) || role.contains(nq);
+        })
+        .toList();
+
+    list.sort((a, b) {
+      final sa = score(a), sb = score(b);
+      if (sa != sb) return sa.compareTo(sb);
+      final an = _norm('${a['first_name'] ?? ''} ${a['last_name'] ?? ''}');
+      final bn = _norm('${b['first_name'] ?? ''} ${b['last_name'] ?? ''}');
+      return an.compareTo(bn);
+    });
+
+    return list.take(30);
   }
 
   await showDialog(
     context: context,
     builder: (_) => StatefulBuilder(
       builder: (context, setState) {
+        // If dialog opened for NEW loan and an employeeId was pre-filled (rare), check block
+        if (employeeId != null && initial == null && nextAvailable == null) {
+          () async {
+            final res = await http.get(
+              Uri.parse('${globalServerUri.toString()}/employees/loans/check/$employeeId')
+            );
+            if (res.statusCode == 200) {
+              final d = jsonDecode(res.body);
+              setState(() {
+                hasActiveLoan = d['has_active_loan'] as bool? ?? false;
+                nextAvailable = d['next_available_date'] != null
+                    ? DateTime.parse(d['next_available_date'])
+                    : null;
+              });
+            }
+          }();
+        }
+
         return AlertDialog(
-          title: Text(initial == null ? 'إضافة دين' : 'تعديل دين'),
+          title: Text(initial == null ? 'إضافة سلف' : 'تعديل سلف'),
           content: Form(
             key: _formKey,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Employee searchable selector
+                // Employee searchable selector (sync + ranked + Arabic-friendly)
                 Autocomplete<Map<String, dynamic>>(
-                  optionsBuilder: (TextEditingValue textEditingValue) async {
-                    final searchQuery = textEditingValue.text.toLowerCase();
-                    final employees = await _fetchEmployeesByQuery(searchQuery);
-                    return employees.cast<Map<String, dynamic>>();
+                  optionsBuilder: (TextEditingValue tev) {
+                    return _searchEmployeesSync(tev.text);
                   },
-                  displayStringForOption: (option) => '${option['first_name']} ${option['last_name']}',
+                  displayStringForOption: (opt) => '${opt['first_name']} ${opt['last_name']}',
                   fieldViewBuilder: (
                     BuildContext context,
-                    TextEditingController textEditingController,
-                    FocusNode focusNode,
+                    TextEditingController tc,
+                    FocusNode fn,
                     VoidCallback onFieldSubmitted,
                   ) {
-                    // Set initial value if editing
-                    if (initial != null && textEditingController.text.isEmpty) {
-                      final initialEmp = allEmployees.firstWhere(
-                        (e) => e['id'] == employeeId,
-                        orElse: () => {},
-                      );
-                      if (initialEmp.isNotEmpty) {
-                        textEditingController.text = '${initialEmp['first_name']} ${initialEmp['last_name']}';
+                    // Pre-fill when editing
+                    if (initial != null && tc.text.isEmpty && employeeId != null) {
+                      final initEmp = allEmployees
+                          .cast<Map<String, dynamic>>()
+                          .firstWhere((e) => e['id'] == employeeId, orElse: () => {});
+                      if (initEmp.isNotEmpty) {
+                        tc.text = '${initEmp['first_name']} ${initEmp['last_name']}';
                       }
                     }
-                    
+
                     return TextFormField(
-                      controller: textEditingController,
-                      focusNode: focusNode,
+                      controller: tc,
+                      focusNode: fn,
                       decoration: InputDecoration(
                         labelText: 'العامل',
-                        suffixIcon: textEditingController.text.isNotEmpty
+                        suffixIcon: tc.text.isNotEmpty
                             ? IconButton(
                                 icon: const Icon(Icons.clear),
                                 onPressed: () {
-                                  textEditingController.clear();
+                                  tc.clear();
                                   setState(() {
                                     employeeId = null;
                                     hasActiveLoan = false;
@@ -1023,7 +1070,28 @@ final pieceEmpRes = await http.get(
                               )
                             : null,
                       ),
-                      validator: (v) => employeeId == null ? 'يرجى اختيار العامل' : null,
+                      onChanged: (_) {
+                        // typing invalidates previous selection
+                        if (employeeId != null) {
+                          setState(() {
+                            employeeId = null;
+                            hasActiveLoan = false;
+                            nextAvailable = null;
+                          });
+                        }
+                      },
+                      onEditingComplete: onFieldSubmitted, // keep default behavior
+                      onFieldSubmitted: (_) {
+                        // If user presses Enter with a unique match, pick it.
+                        final matches = _searchEmployeesSync(tc.text).toList();
+                        if (matches.length == 1) {
+                          final only = matches.first;
+                          setState(() {
+                            employeeId = only['id'] as int;
+                          });
+                        }
+                      },
+                      validator: (_) => employeeId == null ? 'يرجى اختيار العامل' : null,
                     );
                   },
                   onSelected: (Map<String, dynamic> option) async {
@@ -1032,7 +1100,7 @@ final pieceEmpRes = await http.get(
                       hasActiveLoan = false;
                       nextAvailable = null;
                     });
-                    
+
                     // Check loan status for new loans
                     if (initial == null) {
                       final res = await http.get(
@@ -1042,18 +1110,16 @@ final pieceEmpRes = await http.get(
                         final d = jsonDecode(res.body);
                         setState(() {
                           hasActiveLoan = d['has_active_loan'] as bool? ?? false;
-                          if (d['next_available_date'] != null) {
-                            nextAvailable = DateTime.parse(d['next_available_date']);
-                          }
+                          nextAvailable = d['next_available_date'] != null
+                              ? DateTime.parse(d['next_available_date'])
+                              : null;
                         });
                         if (hasActiveLoan && nextAvailable != null) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text(
-                                'لا يمكن منح دين جديد حتى ${nextAvailable!.toLocal().toString().substring(0,10)}'
-                              ),
+                              content: Text('لا يمكن منح سلف جديدة حتى ${nextAvailable!.toLocal().toString().substring(0,10)}'),
                               backgroundColor: Colors.orange,
-                            )
+                            ),
                           );
                         }
                       }
@@ -1069,18 +1135,16 @@ final pieceEmpRes = await http.get(
                       child: Material(
                         elevation: 4.0,
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
+                          constraints: const BoxConstraints(maxHeight: 240, maxWidth: 320),
                           child: ListView.builder(
                             shrinkWrap: true,
                             itemCount: options.length,
                             itemBuilder: (BuildContext context, int index) {
-                              final option = options.elementAt(index);
-                              return GestureDetector(
-                                onTap: () => onSelected(option),
-                                child: ListTile(
-                                  title: Text('${option['first_name']} ${option['last_name']}'),
-                                  subtitle: Text('${option['phone'] ?? ''} - ${option['role'] ?? ''}'),
-                                ),
+                              final opt = options.elementAt(index);
+                              return ListTile(
+                                title: Text('${opt['first_name']} ${opt['last_name']}'),
+                                subtitle: Text('${opt['phone'] ?? ''} - ${opt['role'] ?? ''}'),
+                                onTap: () => onSelected(opt),
                               );
                             },
                           ),
@@ -1090,42 +1154,39 @@ final pieceEmpRes = await http.get(
                   },
                 ),
 
-                // Warning block message
                 if (hasActiveLoan && nextAvailable != null) ...[
                   const SizedBox(height: 8),
                   Text(
-                    'لا يمكن منح دين جديد حتى ${nextAvailable!.toLocal().toString().substring(0,10)}',
+                    'لا يمكن منح سلف جديدة حتى ${nextAvailable!.toLocal().toString().substring(0,10)}',
                     style: const TextStyle(color: Colors.orange),
                   ),
                 ],
 
-                // Amount field
                 TextFormField(
                   controller: amountController,
                   decoration: const InputDecoration(labelText: 'المبلغ'),
                   keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
                   validator: (v) {
                     if (v == null || v.isEmpty) return 'مطلوب';
                     final numVal = num.tryParse(v);
-                    if (numVal == null || numVal <= 0) return 'يجب أن يكون رقم إيجابي';
+                    if (numVal == null || numVal <= 0) return 'يجب أن يكون رقمًا إيجابيًا';
                     return null;
                   },
                 ),
 
-                // Duration selector
                 DropdownButtonFormField<int>(
                   value: duration,
                   decoration: const InputDecoration(labelText: 'المدة (شهور)'),
-                  items: List.generate(12, (i) => i + 1)
-                    .map((m) => DropdownMenuItem<int>(value: m, child: Text('$m')))
-                    .toList(),
+                  items: List.generate(24, (i) => i + 1)
+                      .map((m) => DropdownMenuItem<int>(value: m, child: Text('$m')))
+                      .toList(),
                   onChanged: (v) => setState(() => duration = v!),
                   validator: (v) => v == null || v <= 0 ? 'يرجى اختيار مدة صالحة' : null,
                 ),
 
-                // Loan date picker
                 const SizedBox(height: 8),
-                Text('تاريخ الدين: ${selectedDate.toLocal().toString().substring(0, 10)}'),
+                Text('تاريخ السلف: ${selectedDate.toLocal().toString().substring(0, 10)}'),
                 ElevatedButton(
                   child: const Text('اختر التاريخ'),
                   onPressed: () async {
@@ -1137,9 +1198,7 @@ final pieceEmpRes = await http.get(
                       locale: const Locale('ar', 'AR'),
                     );
                     if (picked != null && picked != selectedDate) {
-                      setState(() {
-                        selectedDate = picked;
-                      });
+                      setState(() => selectedDate = picked);
                     }
                   },
                 ),
@@ -1148,41 +1207,47 @@ final pieceEmpRes = await http.get(
           ),
           actions: [
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 if (!_formKey.currentState!.validate()) return;
+
                 if (hasActiveLoan && initial == null) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('لا يمكن إضافة دين جديدة - العامل لديه دين نشطة'),
-                      backgroundColor: Colors.red
-                    )
+                      content: Text('لا يمكن إضافة سلف جديدة - العامل لديه سلف نشطة'),
+                      backgroundColor: Colors.red,
+                    ),
                   );
                   return;
                 }
 
                 final data = {
-                  'employee_id'      : employeeId,
-                  'amount'           : num.tryParse(amountController.text) ?? 0,
-                  'duration_months'  : duration,
-                  'loan_date'        : selectedDate.toIso8601String(),
+                  'employee_id'     : employeeId,
+                  'amount'          : num.tryParse(amountController.text) ?? 0,
+                  'duration_months' : duration,
+                  'loan_date'       : selectedDate.toIso8601String(),
                 };
 
-                if (initial == null) {
-                  http.post(
-                    Uri.parse(_loansUrl),
-                    headers: {'Content-Type': 'application/json'},
-                    body: jsonEncode(data),
-                  );
-                } else {
-                  http.put(
-                    Uri.parse('${globalServerUri.toString()}/employees/loans/${initial!['id']}'),
-                    headers: {'Content-Type': 'application/json'},
-                    body: jsonEncode(data),
+                try {
+                  if (initial == null) {
+                    await http.post(
+                      Uri.parse(_loansUrl),
+                      headers: {'Content-Type': 'application/json'},
+                      body: jsonEncode(data),
+                    );
+                  } else {
+                    await http.put(
+                      Uri.parse('${globalServerUri.toString()}/employees/loans/${initial!['id']}'),
+                      headers: {'Content-Type': 'application/json'},
+                      body: jsonEncode(data),
+                    );
+                  }
+                  Navigator.pop(context);
+                  await fetchDataSection();
+                } catch (_) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('فشل حفظ السلف')),
                   );
                 }
-
-                Navigator.pop(context);
-                fetchDataSection();
               },
               child: const Text('حفظ'),
             ),
@@ -1390,154 +1455,225 @@ final pieceEmpRes = await http.get(
   }
 
   Future<void> addOrEditDebt({Map? initial}) async {
-    int? employeeId = initial?['employee_id'] as int?;
-    final amountController = TextEditingController(text: initial?['amount']?.toString() ?? '');
-    DateTime selectedDate = initial != null && initial['debt_date'] != null ? DateTime.parse(initial['debt_date']) : DateTime.now();
-    final _formKey = GlobalKey<FormState>();
+  int? employeeId = initial?['employee_id'] as int?;
+  final amountController = TextEditingController(text: initial?['amount']?.toString() ?? '');
+  DateTime selectedDate = initial != null && initial['debt_date'] != null
+      ? DateTime.parse(initial['debt_date'])
+      : DateTime.now();
+  final _formKey = GlobalKey<FormState>();
 
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setState) {
-          return AlertDialog(
-            title: Text(initial == null ? 'إضافة دين' : 'تعديل دين'),
-            content: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Employee searchable selector
-                  Autocomplete<Map<String, dynamic>>(
-                    optionsBuilder: (TextEditingValue textEditingValue) async {
-                      final searchQuery = textEditingValue.text.toLowerCase();
-                      final employees = await _fetchEmployeesByQuery(searchQuery);
-                      return employees.cast<Map<String, dynamic>>();
-                    },
-                    displayStringForOption: (option) => '${option['first_name']} ${option['last_name']}',
-                    fieldViewBuilder: (
-                      BuildContext context,
-                      TextEditingController textEditingController,
-                      FocusNode focusNode,
-                      VoidCallback onFieldSubmitted,
-                    ) {
-                      // Set initial value if editing
-                      if (initial != null && textEditingController.text.isEmpty) {
-                        final initialEmp = allEmployees.firstWhere(
-                          (e) => e['id'] == employeeId,
-                          orElse: () => {},
-                        );
-                        if (initialEmp.isNotEmpty) {
-                          textEditingController.text = '${initialEmp['first_name']} ${initialEmp['last_name']}';
-                        }
+  String _norm(String s) {
+    return s.toLowerCase()
+        .replaceAll(RegExp(r'[\u064B-\u0652\u0640]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  Iterable<Map<String, dynamic>> _searchEmployeesSync(String q) {
+    final base = allEmployees.cast<Map<String, dynamic>>();
+    if (q.isEmpty) return base.take(30);
+
+    final nq = _norm(q);
+    int score(Map<String, dynamic> e) {
+      final name  = _norm('${e['first_name'] ?? ''} ${e['last_name'] ?? ''}');
+      final phone = _norm('${e['phone'] ?? ''}');
+      final role  = _norm('${e['role'] ?? ''}');
+      if (name.startsWith(nq))  return 0;
+      if (phone.startsWith(nq)) return 1;
+      if (name.contains(nq))    return 2;
+      if (phone.contains(nq))   return 3;
+      if (role.contains(nq))    return 4;
+      return 5;
+    }
+
+    final list = base
+        .where((e) {
+          final name  = _norm('${e['first_name'] ?? ''} ${e['last_name'] ?? ''}');
+          final phone = _norm('${e['phone'] ?? ''}');
+          final role  = _norm('${e['role'] ?? ''}');
+          return name.contains(nq) || phone.contains(nq) || role.contains(nq);
+        })
+        .toList();
+
+    list.sort((a, b) {
+      final sa = score(a), sb = score(b);
+      if (sa != sb) return sa.compareTo(sb);
+      final an = _norm('${a['first_name'] ?? ''} ${a['last_name'] ?? ''}');
+      final bn = _norm('${b['first_name'] ?? ''} ${b['last_name'] ?? ''}');
+      return an.compareTo(bn);
+    });
+
+    return list.take(30);
+  }
+
+  await showDialog(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (context, setState) {
+        return AlertDialog(
+          title: Text(initial == null ? 'إضافة دين' : 'تعديل دين'),
+          content: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Autocomplete<Map<String, dynamic>>(
+                  optionsBuilder: (TextEditingValue tev) {
+                    return _searchEmployeesSync(tev.text);
+                  },
+                  displayStringForOption: (opt) => '${opt['first_name']} ${opt['last_name']}',
+                  fieldViewBuilder: (
+                    BuildContext context,
+                    TextEditingController tc,
+                    FocusNode fn,
+                    VoidCallback onFieldSubmitted,
+                  ) {
+                    if (initial != null && tc.text.isEmpty && employeeId != null) {
+                      final initEmp = allEmployees
+                          .cast<Map<String, dynamic>>()
+                          .firstWhere((e) => e['id'] == employeeId, orElse: () => {});
+                      if (initEmp.isNotEmpty) {
+                        tc.text = '${initEmp['first_name']} ${initEmp['last_name']}';
                       }
-                      
-                      return TextFormField(
-                        controller: textEditingController,
-                        focusNode: focusNode,
-                        decoration: InputDecoration(
-                          labelText: 'العامل',
-                          suffixIcon: textEditingController.text.isNotEmpty
-                              ? IconButton(
-                                  icon: const Icon(Icons.clear),
-                                  onPressed: () {
-                                    textEditingController.clear();
-                                    setState(() => employeeId = null);
-                                  },
-                                )
-                              : null,
-                        ),
-                        validator: (v) => employeeId == null ? 'يرجى اختيار العامل' : null,
-                      );
-                    },
-                    onSelected: (Map<String, dynamic> option) {
-                      setState(() => employeeId = option['id'] as int);
-                    },
-                    optionsViewBuilder: (
-                      BuildContext context,
-                      AutocompleteOnSelected<Map<String, dynamic>> onSelected,
-                      Iterable<Map<String, dynamic>> options,
-                    ) {
-                      return Align(
-                        alignment: Alignment.topRight,
-                        child: Material(
-                          elevation: 4.0,
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxHeight: 200, maxWidth: 300),
-                            child: ListView.builder(
-                              shrinkWrap: true,
-                              itemCount: options.length,
-                              itemBuilder: (BuildContext context, int index) {
-                                final option = options.elementAt(index);
-                                return GestureDetector(
-                                  onTap: () => onSelected(option),
-                                  child: ListTile(
-                                    title: Text('${option['first_name']} ${option['last_name']}'),
-                                    subtitle: Text('${option['phone'] ?? ''} - ${option['role'] ?? ''}'),
-                                  ),
-                                );
-                              },
-                            ),
+                    }
+
+                    return TextFormField(
+                      controller: tc,
+                      focusNode: fn,
+                      decoration: InputDecoration(
+                        labelText: 'العامل',
+                        suffixIcon: tc.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  tc.clear();
+                                  setState(() => employeeId = null);
+                                },
+                              )
+                            : null,
+                      ),
+                      onChanged: (_) {
+                        if (employeeId != null) setState(() => employeeId = null);
+                      },
+                      onEditingComplete: onFieldSubmitted,
+                      onFieldSubmitted: (_) {
+                        final matches = _searchEmployeesSync(tc.text).toList();
+                        if (matches.length == 1) {
+                          setState(() => employeeId = matches.first['id'] as int);
+                        }
+                      },
+                      validator: (_) => employeeId == null ? 'يرجى اختيار العامل' : null,
+                    );
+                  },
+                  onSelected: (Map<String, dynamic> option) {
+                    setState(() => employeeId = option['id'] as int);
+                  },
+                  optionsViewBuilder: (
+                    BuildContext context,
+                    AutocompleteOnSelected<Map<String, dynamic>> onSelected,
+                    Iterable<Map<String, dynamic>> options,
+                  ) {
+                    return Align(
+                      alignment: Alignment.topRight,
+                      child: Material(
+                        elevation: 4.0,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 240, maxWidth: 320),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: options.length,
+                            itemBuilder: (BuildContext context, int index) {
+                              final opt = options.elementAt(index);
+                              return ListTile(
+                                title: Text('${opt['first_name']} ${opt['last_name']}'),
+                                subtitle: Text('${opt['phone'] ?? ''} - ${opt['role'] ?? ''}'),
+                                onTap: () => onSelected(opt),
+                              );
+                            },
                           ),
                         ),
-                      );
-                    },
-                  ),
-                  
-                  TextFormField(
-                    controller: amountController,
-                    decoration: const InputDecoration(labelText: 'المبلغ'),
-                    keyboardType: TextInputType.number,
-                    validator: (v) {
-                      if (v == null || v.isEmpty) return 'مطلوب';
-                      final numVal = num.tryParse(v);
-                      if (numVal == null || numVal <= 0) return 'يجب أن يكون رقم إيجابي';
-                      return null;
-                    },
-                  ),
-                  Text('تاريخ الدين: ${selectedDate.toLocal().toString().substring(0, 10)}'),
-                  ElevatedButton(
-                    child: const Text('اختر التاريخ'),
-                    onPressed: () async {
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: selectedDate,
-                        firstDate: DateTime(2000),
-                        lastDate: DateTime.now(),
-                        locale: const Locale('ar', 'AR'),
-                      );
-                      if (picked != null && picked != selectedDate) setState(() => selectedDate = picked);
-                    },
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  if (_formKey.currentState!.validate()) {
-                    final data = {
-                      'employee_id': employeeId,
-                      'amount': num.tryParse(amountController.text) ?? 0,
-                      'debt_date': selectedDate.toIso8601String(),
-                    };
-                    if (initial == null) {
-                      http.post(Uri.parse(_debtsUrl), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
-                    } else {
-                      http.put(Uri.parse('${globalServerUri.toString()}/employees/debts/${initial['id']}'), headers: {'Content-Type': 'application/json'}, body: jsonEncode(data));
+                      ),
+                    );
+                  },
+                ),
+
+                TextFormField(
+                  controller: amountController,
+                  decoration: const InputDecoration(labelText: 'المبلغ'),
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                  validator: (v) {
+                    if (v == null || v.isEmpty) return 'مطلوب';
+                    final numVal = num.tryParse(v);
+                    if (numVal == null || numVal <= 0) return 'يجب أن يكون رقمًا إيجابيًا';
+                    return null;
+                  },
+                ),
+
+                Text('تاريخ الدين: ${selectedDate.toLocal().toString().substring(0, 10)}'),
+                ElevatedButton(
+                  child: const Text('اختر التاريخ'),
+                  onPressed: () async {
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: selectedDate,
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime.now(),
+                      locale: const Locale('ar', 'AR'),
+                    );
+                    if (picked != null && picked != selectedDate) {
+                      setState(() => selectedDate = picked);
                     }
-                    Navigator.pop(context);
-                    fetchDataSection();
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                if (!_formKey.currentState!.validate()) return;
+                final data = {
+                  'employee_id': employeeId,
+                  'amount'     : num.tryParse(amountController.text) ?? 0,
+                  'debt_date'  : selectedDate.toIso8601String(),
+                };
+
+                try {
+                  if (initial == null) {
+                    await http.post(
+                      Uri.parse(_debtsUrl),
+                      headers: {'Content-Type': 'application/json'},
+                      body: jsonEncode(data),
+                    );
+                  } else {
+                    await http.put(
+                      Uri.parse('${globalServerUri.toString()}/employees/debts/${initial['id']}'),
+                      headers: {'Content-Type': 'application/json'},
+                      body: jsonEncode(data),
+                    );
                   }
-                },
-                child: const Text('حفظ'),
-              ),
-              TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
-            ],
-          );
-        },
-      ),
-    );
-  }
+                  Navigator.pop(context);
+                  await fetchDataSection();
+                } catch (_) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('فشل حفظ الدين')),
+                  );
+                }
+              },
+              child: const Text('حفظ'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('إلغاء'),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
 
   Future<void> deleteDebt(int id) async {
     await http.delete(Uri.parse('${globalServerUri.toString()}/employees/debts/$id'));
